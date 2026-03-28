@@ -33,7 +33,7 @@ What to build first. Ship in 2-3 weeks.
 ## Phase 4: Platforms
 
 - [ ] macOS app (Catalyst or native SwiftUI, shared codebase)
-- [ ] Always-on-screen overlay for Note (floating widget, quick input, status)
+- [ ] Always-on-screen notch overlay (Dynamic Island style for Mac notch: status, quick input, agent activity)
 
 ## Non-goals for MVP
 
