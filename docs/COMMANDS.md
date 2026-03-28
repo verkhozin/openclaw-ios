@@ -92,6 +92,78 @@ Examples: `/model opus`, `/model openai/gpt-5.2`, `/model 3` (by number from lis
 | `/tts always` | Read all responses | Voice toggle |
 | `/tts tagged` | Read only tagged responses | Voice toggle |
 
+## ACP (Agent Code Platform)
+
+| Command | What it does | UI element |
+|---------|-------------|------------|
+| `/acp spawn` | Spawn ACP coding session | ACP section in Tasks |
+| `/acp cancel` | Cancel ACP session | Swipe to cancel |
+| `/acp steer <msg>` | Redirect ACP session | Long press > Steer |
+| `/acp close` | Close ACP session | Close button |
+| `/acp status` | Show ACP session status | Status badge |
+| `/acp set-mode run\|session` | Set ACP mode | Mode picker |
+| `/acp set <key> <value>` | Set ACP option | Settings |
+| `/acp cwd <path>` | Set working directory | Path picker |
+| `/acp permissions` | Show/set permissions | Permissions sheet |
+| `/acp timeout <seconds>` | Set timeout | Number input |
+| `/acp model <name>` | Set ACP model | Model picker |
+| `/acp reset-options` | Reset to defaults | Reset button |
+| `/acp doctor` | Diagnose ACP issues | Debug section |
+| `/acp install` | Install ACP runtime | Setup wizard |
+| `/acp sessions` | List ACP sessions | ACP tab |
+
+## Bash / Shell
+
+| Command | What it does | UI element |
+|---------|-------------|------------|
+| `/bash <cmd>` | Run shell command on host | Terminal input |
+| `! <cmd>` | Alias for /bash | Same |
+| `!poll` | Check running command output | Poll button |
+| `!stop` | Stop running command | Stop button |
+
+## Session Management
+
+| Command | What it does | UI element |
+|---------|-------------|------------|
+| `/session idle <duration\|off>` | Auto-unfocus after inactivity | Settings > Sessions |
+| `/session max-age <duration\|off>` | Hard max-age auto-unfocus | Settings > Sessions |
+| `/export-session` | Export session to HTML | Share button |
+| `/agents` | List thread-bound agents | Agents list |
+
+## Skills
+
+| Command | What it does | UI element |
+|---------|-------------|------------|
+| `/skill <name> [input]` | Run a skill by name | Skills browser |
+
+## Routing / Docking
+
+| Command | What it does | UI element |
+|---------|-------------|------------|
+| `/dock-telegram` | Switch replies to Telegram | Channel picker |
+| `/dock-discord` | Switch replies to Discord | Channel picker |
+| `/dock-slack` | Switch replies to Slack | Channel picker |
+
+## Security
+
+| Command | What it does | UI element |
+|---------|-------------|------------|
+| `/allowlist` | List allowlisted users | Settings > Security |
+| `/allowlist add <id>` | Add to allowlist | Add button |
+| `/allowlist remove <id>` | Remove from allowlist | Swipe to remove |
+
+## Config (owner-only)
+
+| Command | What it does | UI element |
+|---------|-------------|------------|
+| `/config show` | Show full config | Config viewer |
+| `/config get <key>` | Get config value | Search |
+| `/config set <key>=<value>` | Set config value | Edit field |
+| `/config unset <key>` | Remove config value | Delete |
+| `/debug show` | Show runtime overrides | Debug panel |
+| `/debug set <key>=<value>` | Set runtime override | Debug edit |
+| `/debug reset` | Clear all overrides | Reset button |
+
 ## System
 
 | Command | What it does | UI element |
@@ -99,6 +171,7 @@ Examples: `/model opus`, `/model openai/gpt-5.2`, `/model 3` (by number from lis
 | `/help` | Show help | Help screen |
 | `/commands` | List all commands | Command reference |
 | `/restart` | Restart agent session | Settings > Advanced |
+| `/context list\|detail\|json` | Show context breakdown | Info button |
 
 ## iOS App Command Groups
 
