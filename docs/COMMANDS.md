@@ -27,11 +27,15 @@ Examples: `/model opus`, `/model openai/gpt-5.2`, `/model 3` (by number from lis
 
 | Command | What it does | UI element |
 |---------|-------------|------------|
-| `/think off` | No extended thinking | Toggle in settings |
+| `/think off` | No extended thinking | Segmented control |
+| `/think minimal` | Minimal thinking | Segmented control |
 | `/think low` | Low thinking | Segmented control |
 | `/think medium` | Medium thinking | Segmented control |
 | `/think high` | Deep thinking | Segmented control |
-| `/reasoning on\|off` | Show reasoning in response | Toggle |
+| `/think xhigh` | Maximum thinking | Segmented control |
+| `/reasoning on` | Show reasoning in separate message | Toggle |
+| `/reasoning off` | Hide reasoning | Toggle |
+| `/reasoning stream` | Stream reasoning (Telegram draft) | Toggle |
 
 ## Performance
 
@@ -40,7 +44,7 @@ Examples: `/model opus`, `/model openai/gpt-5.2`, `/model 3` (by number from lis
 | `/fast on` | Faster responses, less quality | Toggle |
 | `/fast off` | Normal quality | Toggle |
 | `/verbose on\|off` | Show detailed tool output | Debug toggle |
-| `/elevated on\|off\|ask` | Elevated permissions for tools | Settings |
+| `/elevated on\|off\|ask\|full` | Elevated permissions (full = skip approvals) | Settings |
 
 ## Usage & Status
 
@@ -57,8 +61,14 @@ Examples: `/model opus`, `/model openai/gpt-5.2`, `/model 3` (by number from lis
 | Command | What it does | UI element |
 |---------|-------------|------------|
 | `/subagents list` | List active sub-agents | Tasks tab |
-| `/kill <id\|#\|all>` | Kill sub-agent | Swipe to delete on task |
-| `/steer <id> <msg>` | Redirect sub-agent | Long press > Steer |
+| `/subagents kill <id>` | Kill sub-agent | Swipe to delete on task |
+| `/subagents log <id>` | View sub-agent logs | Tap > Logs |
+| `/subagents info <id>` | Detailed sub-agent info | Tap > Details |
+| `/subagents send <id> <msg>` | Send message to sub-agent | Action sheet |
+| `/subagents steer <id> <msg>` | Redirect sub-agent in-flight | Long press > Steer |
+| `/subagents spawn` | Spawn new sub-agent | Create button |
+| `/kill <id\|#\|all>` | Quick kill (shortcut) | Swipe to delete |
+| `/steer <id> <msg>` | Quick steer (shortcut) | Long press > Steer |
 | `/tell <id> <msg>` | Alias for steer | Same |
 
 ## Exec Approvals
@@ -88,9 +98,22 @@ Examples: `/model opus`, `/model openai/gpt-5.2`, `/model 3` (by number from lis
 
 | Command | What it does | UI element |
 |---------|-------------|------------|
-| `/tts off` | No text-to-speech | Voice toggle |
-| `/tts always` | Read all responses | Voice toggle |
-| `/tts tagged` | Read only tagged responses | Voice toggle |
+| `/tts off` | No text-to-speech | Voice settings |
+| `/tts always` | Read all responses aloud | Voice settings |
+| `/tts inbound` | Read inbound messages only | Voice settings |
+| `/tts tagged` | Read only tagged responses | Voice settings |
+| `/tts status` | Show current TTS config | Voice settings |
+| `/tts provider` | Show/set TTS provider | Provider picker |
+| `/tts limit <seconds>` | Max TTS audio length | Number input |
+| `/tts summary` | Read summary only | Voice settings |
+| `/tts audio` | Audio playback control | Playback controls |
+
+## Focus / Thread Binding
+
+| Command | What it does | UI element |
+|---------|-------------|------------|
+| `/focus <target>` | Bind thread to session/subagent | Focus picker |
+| `/unfocus` | Remove thread binding | Unfocus button |
 
 ## ACP (Agent Code Platform)
 
@@ -127,8 +150,16 @@ Examples: `/model opus`, `/model openai/gpt-5.2`, `/model 3` (by number from lis
 |---------|-------------|------------|
 | `/session idle <duration\|off>` | Auto-unfocus after inactivity | Settings > Sessions |
 | `/session max-age <duration\|off>` | Hard max-age auto-unfocus | Settings > Sessions |
-| `/export-session` | Export session to HTML | Share button |
+| `/export-session [path]` | Export session to HTML | Share button |
 | `/agents` | List thread-bound agents | Agents list |
+
+## Discord Voice (Discord only)
+
+| Command | What it does | UI element |
+|---------|-------------|------------|
+| `/vc join` | Join voice channel | N/A (Discord) |
+| `/vc leave` | Leave voice channel | N/A (Discord) |
+| `/vc status` | Voice channel status | N/A (Discord) |
 
 ## Skills
 
