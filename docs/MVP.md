@@ -30,6 +30,11 @@ What to build first. Ship in 2-3 weeks.
 - [ ] Privacy dashboard
 - [ ] Monitoring (usage %, token spend, gateway health)
 
+## Phase 4: Platforms
+
+- [ ] macOS app (Catalyst or native SwiftUI, shared codebase)
+- [ ] Always-on-screen overlay for Note (floating widget, quick input, status)
+
 ## Non-goals for MVP
 
 - Android (later)
