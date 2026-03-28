@@ -1,22 +1,31 @@
 import Foundation
 import Security
 
-/// Keychain wrapper for storing gateway credentials
+/// Keychain wrapper for storing gateway credentials securely.
+///
+/// Stores: gatewayURL, authToken, deviceToken, deviceId
 enum KeychainService {
-    private static let service = "com.openclaw.ios"
+    private static let service = "com.clios.app"
     
-    static func save(key: String, value: String) {
-        guard let data = value.data(using: .utf8) else { return }
+    // MARK: - CRUD
+    
+    @discardableResult
+    static func save(key: String, value: String) -> Bool {
+        guard let data = value.data(using: .utf8) else { return false }
+        
+        // Delete existing first
+        delete(key: key)
         
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
-            kSecValueData as String: data
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
         
-        SecItemDelete(query as CFDictionary)
-        SecItemAdd(query as CFDictionary, nil)
+        let status = SecItemAdd(query as CFDictionary, nil)
+        return status == errSecSuccess
     }
     
     static func load(key: String) -> String? {
@@ -29,18 +38,34 @@ enum KeychainService {
         ]
         
         var result: AnyObject?
-        SecItemCopyMatching(query as CFDictionary, &result)
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
         
-        guard let data = result as? Data else { return nil }
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
     
-    static func delete(key: String) {
+    @discardableResult
+    static func delete(key: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key
         ]
-        SecItemDelete(query as CFDictionary)
+        
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
+    
+    // MARK: - Convenience
+    
+    /// Delete all CLiOS keychain items
+    static func deleteAll() {
+        let keys = ["gatewayURL", "authToken", "deviceToken", "deviceId"]
+        keys.forEach { delete(key: $0) }
+    }
+    
+    /// Check if pairing credentials exist
+    static var hasPairing: Bool {
+        return load(key: "gatewayURL") != nil && load(key: "authToken") != nil
     }
 }
