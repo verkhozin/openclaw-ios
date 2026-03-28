@@ -195,6 +195,16 @@ Examples: `/model opus`, `/model openai/gpt-5.2`, `/model 3` (by number from lis
 | `/debug set <key>=<value>` | Set runtime override | Debug edit |
 | `/debug reset` | Clear all overrides | Reset button |
 
+## Context
+
+| Command | What it does | UI element |
+|---------|-------------|------------|
+| `/context` | Show context window usage | Info button in chat |
+| `/context list` | Per-file context breakdown | Detail view |
+| `/context detail` | Full breakdown (files + tools + skills + system) | Detail view |
+| `/context json` | Raw JSON context data | Developer mode |
+| `/compact [instructions]` | Compress context to save tokens | Button / auto |
+
 ## System
 
 | Command | What it does | UI element |
@@ -202,7 +212,8 @@ Examples: `/model opus`, `/model openai/gpt-5.2`, `/model 3` (by number from lis
 | `/help` | Show help | Help screen |
 | `/commands` | List all commands | Command reference |
 | `/restart` | Restart agent session | Settings > Advanced |
-| `/context list\|detail\|json` | Show context breakdown | Info button |
+| `/start` | Telegram standard start command | N/A (auto on first connect) |
+| `/agent` | Agent info/control | Agent settings |
 
 ## iOS App Command Groups
 
