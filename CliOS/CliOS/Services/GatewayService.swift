@@ -1,388 +1,776 @@
 import Foundation
 import Combine
+import os.log
 
-/// Main service: WebSocket connection to OpenClaw Gateway.
+private let logger = Logger(subsystem: "com.clios.app", category: "GatewayService")
+
+/// Main service: WebSocket connection to OpenClaw Gateway
 /// All data flows through here.
 @MainActor
 class GatewayService: ObservableObject {
     static let shared = GatewayService()
-    
+
     // MARK: - Published state
     @Published var isPaired: Bool = false
     @Published var status: GatewayStatus = GatewayStatus()
     @Published var messages: [Message] = []
     @Published var tasks: [AgentTask] = []
     @Published var cronJobs: [CronJob] = []
-    
+    @Published var connectionLog: [String] = []
+
+    let sessionStore = SessionStore.shared
+
     // MARK: - Connection
-    private var webSocket: URLSessionWebSocketTask?
-    private var gatewayURL: URL?
-    private var authToken: String?
-    private var deviceToken: String?
-    private var deviceId: String?
-    private var pendingRequests: [String: CheckedContinuation<WSResponse, Error>] = [:]
-    private var reconnectTask: Task<Void, Never>?
+    // nonisolated(unsafe) so the fast-path challenge handler can read these
+    // without hopping to MainActor. Only written on MainActor.
+    nonisolated(unsafe) private var webSocket: URLSessionWebSocketTask?
+    nonisolated(unsafe) private(set) var gatewayURL: URL?
+    nonisolated(unsafe) private(set) var authToken: String?
+    private var session: URLSession?
+    private var pingTimer: Timer?
     private var reconnectAttempt: Int = 0
-    private let maxReconnectDelay: TimeInterval = 30
-    
-    /// Card types this client supports (sent at connect)
-    let supportedCardTypes: [String] = [
-        "github.pr", "github.issue", "github.ci",
-        "email.inbox", "email.draft", "email.digest",
-        "calendar.event", "calendar.conflict",
-        "linear.issue",
-        "file.preview", "file.diff",
-        "lead", "task.status", "usage"
-    ]
-    
+    private let maxReconnectAttempts = 5
+
     private init() {
-        deviceId = getOrCreateDeviceId()
+        logger.info("GatewayService init")
         loadPairing()
+        if isPaired {
+            logger.info("Restored pairing from Keychain — url=\(self.gatewayURL?.absoluteString ?? "nil", privacy: .public)")
+            log("Restored pairing from Keychain")
+        } else {
+            logger.info("No saved pairing found")
+        }
     }
-    
+
     // MARK: - Pairing
-    
+
     func pair(url: URL, token: String) {
+        logger.info("Pairing with \(url.absoluteString, privacy: .public)")
+        log("Pairing with \(url.absoluteString)")
         gatewayURL = url
         authToken = token
         savePairing()
         isPaired = true
+        reconnectAttempt = 0
         connect()
     }
-    
+
     func unpair() {
-        reconnectTask?.cancel()
-        reconnectTask = nil
+        logger.info("Unpairing — clearing credentials")
+        log("Unpairing — clearing credentials and disconnecting")
         disconnect()
         gatewayURL = nil
         authToken = nil
-        deviceToken = nil
         clearPairing()
         isPaired = false
-        messages.removeAll()
-        tasks.removeAll()
-        cronJobs.removeAll()
+        connectionLog.removeAll()
     }
-    
-    // MARK: - WebSocket Connection
-    
+
+    // MARK: - WebSocket
+    //
+    // Protocol flow (single socket):
+    //   1. Open WebSocket
+    //   2. Receive connect.challenge with nonce
+    //   3. Send connect req frame with nonce on SAME socket
+    //   4. Receive hello-ok
+
     func connect() {
-        guard let url = gatewayURL else { return }
-        guard let token = authToken else { return }
-        
+        guard let url = gatewayURL else {
+            logger.warning("connect() called but no URL")
+            log("Cannot connect — no URL")
+            return
+        }
+
         disconnect()
-        
-        let wsURL = buildWebSocketURL(from: url)
-        let session = URLSession(configuration: .default)
-        webSocket = session.webSocketTask(with: wsURL)
-        webSocket?.resume()
-        
-        // Start receive loop
+        reconnectAttempt = 0
+
+        logger.info("Opening WebSocket to \(url.absoluteString, privacy: .public)")
+        log("Connecting to \(url.absoluteString)...")
+
+        let config = URLSessionConfiguration.default
+        config.waitsForConnectivity = false
+        let session = URLSession(configuration: config)
+        self.session = session
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+
+        let task = session.webSocketTask(with: request)
+        self.webSocket = task
+
+        log("WebSocket task created (timeout: 10s)")
+        task.resume()
+
+        log("Waiting for connect.challenge...")
+        logger.info("WebSocket opened — waiting for connect.challenge")
         receiveLoop()
-        
-        // Send connect handshake
-        let connectReq = GatewayHandshake.connectRequest(
-            token: token,
-            deviceId: deviceId ?? "unknown",
-            cardTypes: supportedCardTypes
-        )
-        sendFrame(connectReq)
     }
-    
+
     func disconnect() {
+        stopPingTimer()
+        if webSocket != nil {
+            logger.info("Disconnecting WebSocket")
+            log("Closing WebSocket connection")
+        }
         webSocket?.cancel(with: .normalClosure, reason: nil)
         webSocket = nil
+        session = nil
         status.isConnected = false
     }
-    
-    // MARK: - Send Message to Agent
-    
-    func sendMessage(_ text: String) {
-        let userMessage = Message(role: .user, content: text)
-        messages.append(userMessage)
-        
-        // Create a placeholder agent message for streaming
-        let agentMessage = Message(role: .agent, content: "", isStreaming: true)
-        messages.append(agentMessage)
-        
-        let req = WSRequest(method: GatewayMethod.agent, params: [
-            "message": AnyCodable(text)
-        ])
-        sendFrame(req)
-    }
-    
-    // MARK: - Cron
-    
-    func toggleCron(_ job: CronJob) {
-        let req = WSRequest(method: GatewayMethod.cronUpdate, params: [
-            "jobId": AnyCodable(job.id),
-            "patch": AnyCodable(["enabled": !job.enabled])
-        ])
-        sendFrame(req)
-        
-        // Optimistic update
-        if let idx = cronJobs.firstIndex(where: { $0.id == job.id }) {
-            cronJobs[idx].enabled.toggle()
+
+    // MARK: - Handshake: respond to connect.challenge on same socket
+
+    private nonisolated func sendConnectReq(nonce: String) {
+        guard let token = self.authToken else {
+            logger.error("sendConnectReq: no auth token")
+            return
         }
-    }
-    
-    func runCron(_ job: CronJob) {
-        let req = WSRequest(method: GatewayMethod.cronRun, params: [
-            "jobId": AnyCodable(job.id)
-        ])
-        sendFrame(req)
-    }
-    
-    // MARK: - Exec Approval
-    
-    func resolveApproval(requestId: String, approved: Bool) {
-        let req = WSRequest(method: GatewayMethod.execApprovalResolve, params: [
-            "requestId": AnyCodable(requestId),
-            "resolution": AnyCodable(approved ? "allow-once" : "deny")
-        ])
-        sendFrame(req)
-    }
-    
-    // MARK: - WebSocket Send
-    
-    private func sendFrame<T: Encodable>(_ frame: T) {
-        guard let data = try? JSONEncoder().encode(frame),
-              let string = String(data: data, encoding: .utf8) else { return }
-        
-        webSocket?.send(.string(string)) { [weak self] error in
+
+        let signedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let signature = DeviceCrypto.signChallenge(
+            nonce: nonce,
+            token: token,
+            signedAtMs: signedAtMs
+        )
+
+        let connectFrame: [String: Any] = [
+            "type": "req",
+            "id": UUID().uuidString,
+            "method": "connect",
+            "params": [
+                "minProtocol": 3,
+                "maxProtocol": 3,
+                "client": [
+                    "id": "openclaw-ios",
+                    "version": "1.0.0",
+                    "platform": "ios",
+                    "mode": "ui"
+                ] as [String: Any],
+                "role": "operator",
+                "scopes": ["operator.read", "operator.write", "operator.approvals", "operator.pairing"],
+                "caps": [] as [String],
+                "commands": [] as [String],
+                "permissions": [:] as [String: Any],
+                "auth": [
+                    "token": token
+                ] as [String: Any],
+                "device": [
+                    "id": DeviceCrypto.deviceId,
+                    "publicKey": DeviceCrypto.publicKeyBase64URL,
+                    "signature": signature,
+                    "signedAt": signedAtMs,
+                    "nonce": nonce
+                ] as [String: Any],
+                "locale": "en-US",
+                "userAgent": "CLiOS/1.0.0"
+            ] as [String: Any]
+        ]
+
+        guard let frameData = try? JSONSerialization.data(withJSONObject: connectFrame),
+              let frameText = String(data: frameData, encoding: .utf8) else {
+            logger.error("Failed to serialize connect req frame")
+            Task { @MainActor in self.log("ERROR: failed to serialize connect frame") }
+            return
+        }
+
+        logger.info("Sending connect req with device signature (\(frameText.count) chars)")
+        Task { @MainActor in
+            self.log("OUT connect req (\(frameText.count) chars, device: \(DeviceCrypto.deviceId.prefix(12))...)")
+        }
+
+        self.webSocket?.send(.string(frameText)) { error in
             if let error {
-                print("[WS] Send error: \(error.localizedDescription)")
+                logger.error("Connect req send failed: \(error.localizedDescription, privacy: .public)")
                 Task { @MainActor in
-                    self?.handleDisconnect()
+                    self.log("Connect req FAILED: \(error.localizedDescription)")
+                    self.scheduleReconnect()
+                }
+            } else {
+                logger.info("Connect req sent — waiting for hello-ok")
+                Task { @MainActor in
+                    self.log("Connect req sent — waiting for hello-ok...")
                 }
             }
         }
     }
-    
-    // MARK: - WebSocket Receive
-    
-    private func receiveLoop() {
-        webSocket?.receive { [weak self] result in
+
+    // MARK: - Reconnect
+
+    private func scheduleReconnect() {
+        reconnectAttempt += 1
+        guard reconnectAttempt <= maxReconnectAttempts else {
+            logger.error("Max reconnect attempts (\(self.maxReconnectAttempts)) reached — giving up")
+            log("Max reconnect attempts reached — giving up. Tap Connect to retry.")
+            return
+        }
+
+        let delay = min(pow(2.0, Double(reconnectAttempt)), 30.0)
+        logger.info("Scheduling reconnect #\(self.reconnectAttempt) in \(delay, privacy: .public)s")
+        log("Reconnecting in \(Int(delay))s (attempt \(reconnectAttempt)/\(maxReconnectAttempts))...")
+
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, self.isPaired, !self.status.isConnected else { return }
+            logger.info("Reconnect attempt #\(self.reconnectAttempt)")
+            self.log("Reconnect attempt #\(self.reconnectAttempt)...")
+            self.connect()
+        }
+    }
+
+    // MARK: - Ping keepalive
+
+    private func startPingTimer() {
+        stopPingTimer()
+        logger.debug("Starting ping timer (every 30s)")
+        pingTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.sendProtocolPing()
+            }
+        }
+    }
+
+    private func stopPingTimer() {
+        pingTimer?.invalidate()
+        pingTimer = nil
+    }
+
+    private func sendProtocolPing() {
+        guard let ws = webSocket else { return }
+        ws.sendPing { [weak self] error in
             Task { @MainActor in
                 guard let self else { return }
-                
-                switch result {
-                case .success(let message):
-                    switch message {
-                    case .string(let text):
-                        if let data = text.data(using: .utf8) {
-                            self.handleFrame(WSFrame.parse(data))
-                        }
-                    case .data(let data):
-                        self.handleFrame(WSFrame.parse(data))
-                    @unknown default:
-                        break
-                    }
-                    // Continue receiving
-                    self.receiveLoop()
-                    
-                case .failure(let error):
-                    print("[WS] Receive error: \(error.localizedDescription)")
-                    self.handleDisconnect()
+                if let error {
+                    logger.warning("Protocol ping failed: \(error.localizedDescription, privacy: .public)")
+                    self.log("Keepalive ping failed: \(error.localizedDescription)")
+                    self.status.isConnected = false
+                    self.scheduleReconnect()
+                } else {
+                    logger.debug("Protocol ping OK")
                 }
             }
         }
     }
-    
-    // MARK: - Frame Handler
-    
-    private func handleFrame(_ frame: WSFrame) {
-        switch frame {
-        case .response(let res):
-            handleResponse(res)
-        case .event(let evt):
-            handleEvent(evt)
-        case .unknown(let data):
-            print("[WS] Unknown frame: \(String(data: data, encoding: .utf8) ?? "?")")
+
+    // MARK: - Receive loop
+
+    private func receiveLoop() {
+        guard let ws = webSocket else {
+            logger.warning("receiveLoop: no webSocket")
+            return
+        }
+
+        ws.receive { [weak self] result in
+            guard let self else { return }
+
+            switch result {
+            case .success(let message):
+                let text: String?
+                switch message {
+                case .string(let s):
+                    logger.debug("Received text frame (\(s.count) chars)")
+                    text = s
+                case .data(let d):
+                    logger.debug("Received binary frame (\(d.count) bytes)")
+                    text = String(data: d, encoding: .utf8)
+                @unknown default:
+                    logger.warning("Unknown WebSocket message type")
+                    text = nil
+                }
+
+                if let text {
+                    // Fast path: respond to challenge immediately without MainActor hop
+                    if self.tryHandleChallenge(text) {
+                        // handled
+                    } else {
+                        Task { @MainActor in
+                            self.handleFrame(text)
+                        }
+                    }
+                }
+
+                self.receiveLoop()
+
+            case .failure(let error):
+                let nsError = error as NSError
+                logger.error("WebSocket receive error: \(error.localizedDescription, privacy: .public) (code: \(nsError.code))")
+                Task { @MainActor in
+                    self.log("Connection lost: \(error.localizedDescription) [code \(nsError.code)]")
+                    self.status.isConnected = false
+                    self.stopPingTimer()
+                    self.scheduleReconnect()
+                }
+            }
         }
     }
-    
-    private func handleResponse(_ res: WSResponse) {
-        // Check for connect response (hello-ok)
-        if res.ok,
-           let payload = res.payload,
-           let type = payload["type"]?.value as? String,
-           type == "hello-ok" {
+
+    // MARK: - Fast-path challenge handler (runs on callback thread)
+
+    /// Returns true if this frame was a connect.challenge and was handled.
+    private nonisolated func tryHandleChallenge(_ text: String) -> Bool {
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String else {
+            return false
+        }
+
+        let eventName: String
+        if type == "event", let event = json["event"] as? String {
+            eventName = event
+        } else {
+            eventName = type
+        }
+
+        guard eventName == "connect.challenge" else { return false }
+
+        let payload = json["payload"] as? [String: Any]
+        guard let nonce = payload?["nonce"] as? String else {
+            logger.error("connect.challenge missing nonce")
+            Task { @MainActor in self.log("ERROR: connect.challenge missing nonce") }
+            return true
+        }
+
+        let challengeTs = payload?["ts"] as? Int64
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let latency = challengeTs.map { now - $0 } ?? 0
+
+        logger.info("Challenge received: nonce=\(nonce, privacy: .public) latency=\(latency)ms")
+        Task { @MainActor in
+            self.log("IN  \(String(text.prefix(300)))")
+            self.log("Challenge received (nonce: \(nonce.prefix(12))..., latency: \(latency)ms)")
+            self.log("Responding with connect req on same socket...")
+        }
+
+        // Respond immediately on this thread — same socket
+        sendConnectReq(nonce: nonce)
+        return true
+    }
+
+    // MARK: - Frame handling
+
+    private func handleFrame(_ text: String) {
+        let preview = String(text.prefix(300))
+        log("IN  \(preview)")
+
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String else {
+            logger.warning("Cannot parse frame as JSON")
+            log("Cannot parse frame as JSON")
+            return
+        }
+
+        // Gateway frame formats:
+        //   { "type": "event", "event": "...", "payload": {...} }
+        //   { "type": "res", "id": "...", "result": {...} }
+        //   { "type": "error", ... }
+        //   { "type": "pong" }
+        let eventName: String
+        if type == "event", let event = json["event"] as? String {
+            eventName = event
+        } else if type == "res" {
+            eventName = "res"
+        } else {
+            eventName = type
+        }
+
+        logger.info("Frame type=\(type, privacy: .public) event=\(eventName, privacy: .public)")
+
+        switch eventName {
+        case "connect.challenge":
+            // Normally handled by tryHandleChallenge fast-path; fallback here
+            let payload = json["payload"] as? [String: Any]
+            if let nonce = payload?["nonce"] as? String {
+                log("Received connect.challenge (slow path, nonce: \(nonce.prefix(12))...)")
+                sendConnectReq(nonce: nonce)
+            } else {
+                log("ERROR: connect.challenge missing nonce")
+            }
+
+        case "res":
+            // Response to a req frame (e.g. connect req → hello-ok)
+            handleResponse(json)
+
+        case "hello-ok", "welcome", "connected":
+            logger.info("Gateway confirmed connection (event: \(eventName, privacy: .public))")
+            log("Connected! (\(eventName))")
             status.isConnected = true
             reconnectAttempt = 0
-            
-            // Store device token if provided
-            if let auth = payload["auth"]?.value as? [String: Any],
-               let devToken = auth["deviceToken"] as? String {
-                deviceToken = devToken
-                KeychainService.save(key: "deviceToken", value: devToken)
+            startPingTimer()
+            let src = json["payload"] as? [String: Any] ?? json
+            if let ver = src["version"] as? String {
+                status.version = ver
+                log("  version: \(ver)")
             }
-            return
-        }
-        
-        // Check for error
-        if !res.ok {
-            print("[WS] Error response: \(res.error?.message ?? "unknown")")
-        }
-        
-        // Resume pending async request if any
-        if let continuation = pendingRequests.removeValue(forKey: res.id) {
-            continuation.resume(returning: res)
-        }
-    }
-    
-    private func handleEvent(_ evt: WSEvent) {
-        switch evt.event {
-        case GatewayEvent.connectChallenge:
-            // Server sends challenge before we connect.
-            // For now we proceed without signing (basic token auth).
+            if let model = src["model"] as? String {
+                status.model = model
+                log("  model: \(model)")
+            }
+            if let name = src["agentName"] as? String {
+                status.agentName = name
+                log("  agent: \(name)")
+            }
+
+        case "chat":
+            // Chat events: payload.state = "delta" | "final"
+            // payload.message.content[0].text = "..."
+            let src = json["payload"] as? [String: Any] ?? json
+            let state = src["state"] as? String ?? ""
+            let sessionKey = src["sessionKey"] as? String ?? status.mainSessionKey
+            let seq = (src["seq"] as? Int64) ?? Int64(src["seq"] as? Int ?? 0)
+            let msg = src["message"] as? [String: Any]
+            let contentArr = msg?["content"] as? [[String: Any]]
+            let text = contentArr?.first?["text"] as? String ?? ""
+            let ts = (msg?["timestamp"] as? Int64) ?? Int64(Date().timeIntervalSince1970 * 1000)
+            let runId = src["runId"] as? String
+
+            if !text.isEmpty {
+                // Persist via SessionStore (handles cache, unread, UI update)
+                sessionStore.handleChatEvent(
+                    sessionKey: sessionKey,
+                    state: state,
+                    text: text,
+                    seq: seq,
+                    timestamp: ts,
+                    runId: runId
+                )
+
+                // Also update legacy messages array for existing views
+                if state == "final" {
+                    if let last = messages.last, last.role == .agent, last.isStreaming {
+                        messages[messages.count - 1].content = text
+                        messages[messages.count - 1].isStreaming = false
+                    } else {
+                        messages.append(Message(role: .agent, content: text, isStreaming: false))
+                    }
+                    log("Agent response complete (\(text.count) chars)")
+                } else if state == "delta" {
+                    if let last = messages.last, last.role == .agent, last.isStreaming {
+                        messages[messages.count - 1].content = text
+                    } else {
+                        messages.append(Message(role: .agent, content: text, isStreaming: true))
+                        log("Agent started responding")
+                    }
+                }
+            }
+
+        case "agent", "event:agent":
+            guard let agentEvent = AgentEvent.from(json) else {
+                logger.warning("Could not parse agent event")
+                break
+            }
+            handleAgentEvent(agentEvent)
+
+        case "status", "event:status":
+            let src = json["payload"] as? [String: Any] ?? json
+            if let connected = src["connected"] as? Bool {
+                status.isConnected = connected
+                log("Status update: connected=\(connected)")
+            }
+            if let session = src["sessionPercent"] as? Double {
+                status.sessionPercent = session
+            }
+            if let weekly = src["weeklyPercent"] as? Double {
+                status.weeklyPercent = weekly
+            }
+
+        case "task", "event:task":
+            let src = json["payload"] as? [String: Any] ?? json
+            log("Task event: \(src["status"] as? String ?? "?")")
+
+        case "error":
+            let src = json["payload"] as? [String: Any] ?? json
+            let msg = src["message"] as? String ?? json["message"] as? String ?? "Unknown error"
+            let code = src["code"] as? String ?? json["code"] as? String ?? ""
+            log("ERROR from gateway: \(msg)\(code.isEmpty ? "" : " [\(code)]")")
+
+        case "health":
+            let src = json["payload"] as? [String: Any] ?? json
+            let ok = src["ok"] as? Bool ?? false
+            logger.debug("Health event: ok=\(ok)")
+            // Don't log every health check — too noisy
+
+        case "tick":
+            // Heartbeat from gateway — silent
             break
-            
-        case GatewayEvent.agent, GatewayEvent.agentStream:
-            handleAgentEvent(evt)
-            
-        case GatewayEvent.tick:
-            // Keep-alive tick, no action needed
-            break
-            
-        case GatewayEvent.presence:
-            // Could update online devices list
-            break
-            
-        case GatewayEvent.execApproval:
-            handleExecApproval(evt)
-            
-        case GatewayEvent.shutdown:
-            handleDisconnect()
-            
+
+        case "pong":
+            log("Pong received")
+
         default:
-            print("[WS] Unhandled event: \(evt.event)")
+            log("Unhandled event: \(eventName)")
         }
     }
-    
-    // MARK: - Agent Event Handling
-    
-    private func handleAgentEvent(_ evt: WSEvent) {
-        guard let payload = evt.payload else { return }
-        
-        // Find the last streaming agent message
-        guard let idx = messages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) else { return }
-        
-        if let chunk = payload["chunk"]?.value as? String {
-            // Streaming chunk -- append to current message
-            messages[idx].content += chunk
+
+    // MARK: - Handle "res" frames (responses to our "req" frames)
+
+    private func handleResponse(_ json: [String: Any]) {
+        let payload = json["payload"] as? [String: Any] ?? [:]
+        let payloadType = payload["type"] as? String
+
+        if let error = json["error"] as? [String: Any] {
+            let msg = error["message"] as? String ?? "Unknown error"
+            let code = error["code"] as? Int
+            log("Response error: \(msg)\(code.map { " [code \($0)]" } ?? "")")
+            return
         }
-        
-        if let status = payload["status"]?.value as? String {
-            if status == "completed" || status == "done" {
+
+        // "ok" is at root level: {"type":"res","ok":true,"payload":{"type":"hello-ok",...}}
+        let ok = json["ok"] as? Bool ?? false
+
+        if ok && payloadType == "hello-ok" {
+            let server = payload["server"] as? [String: Any] ?? [:]
+            let version = server["version"] as? String ?? "unknown"
+            let connId = server["connId"] as? String ?? ""
+
+            log("Connected to gateway!")
+            log("  server: v\(version)")
+            log("  connId: \(connId.prefix(12))...")
+            status.isConnected = true
+            status.version = version
+            status.connId = connId
+
+            // Extract mainSessionKey from snapshot
+            let snapshot = payload["snapshot"] as? [String: Any] ?? [:]
+            let sessionDefaults = snapshot["sessionDefaults"] as? [String: Any] ?? [:]
+            if let mainKey = sessionDefaults["mainSessionKey"] as? String {
+                status.mainSessionKey = mainKey
+                log("  sessionKey: \(mainKey)")
+
+                // Initialize session in store and open it
+                sessionStore.ensureSession(key: mainKey, title: "Main")
+                sessionStore.openSession(key: mainKey)
+            }
+
+            // Drain offline outbox
+            sessionStore.drainOutbox { [weak self] sessionKey, content, idempotencyKey in
+                await (self?.sendChatMessage(sessionKey: sessionKey, content: content, idempotencyKey: idempotencyKey) ?? false)
+            }
+            reconnectAttempt = 0
+            startPingTimer()
+        } else if ok {
+            log("Response OK (payload type: \(payloadType ?? "?"))")
+        } else {
+            log("Response received (ok=\(ok), type: \(payloadType ?? "?"))")
+        }
+    }
+
+    // MARK: - Agent event handling
+
+    /// Tracks which runId is currently streaming, so we update the right message.
+    private var activeRunId: String?
+
+    private func handleAgentEvent(_ event: AgentEvent) {
+        switch event.stream {
+        case .lifecycleStart:
+            activeRunId = event.runId
+            logger.info("Agent run started: \(event.runId.prefix(12))")
+            log("Agent started (run: \(event.runId.prefix(12))...)")
+            // Insert a streaming placeholder
+            let m = Message(role: .agent, content: "", isStreaming: true)
+            messages.append(m)
+
+        case .assistant(let text, _):
+            // Update the current streaming message with full text
+            if let idx = messages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
+                messages[idx].content = text
+            } else {
+                // No placeholder yet — create one
+                let m = Message(role: .agent, content: text, isStreaming: true)
+                messages.append(m)
+            }
+
+        case .lifecycleEnd:
+            logger.info("Agent run ended: \(event.runId.prefix(12))")
+            log("Agent finished (run: \(event.runId.prefix(12))...)")
+            // Finalize: stop streaming, parse markdown into blocks
+            if let idx = messages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
                 messages[idx].isStreaming = false
-                
-                // Parse service cards from completed message
-                let parsed = CardParser.parse(messages[idx].content)
-                if !parsed.cards.isEmpty {
-                    messages[idx].content = parsed.cleanText
-                    messages[idx].serviceCard = parsed.cards.first
-                }
-            } else if status == "error" {
-                messages[idx].isStreaming = false
-                if messages[idx].content.isEmpty {
-                    messages[idx].content = payload["error"]?.value as? String ?? "Agent error"
+                messages[idx].blocks = MessageParser.parse(messages[idx].content)
+            }
+            activeRunId = nil
+        }
+    }
+
+    // MARK: - Send message to agent
+
+    func sendMessage(_ text: String) {
+        let sessionKey = status.mainSessionKey
+        logger.info("Sending message to agent (\(text.count) chars) session=\(sessionKey, privacy: .public)")
+        log("OUT chat.send (\(text.count) chars)")
+
+        // Persist user message via SessionStore
+        let prepared = sessionStore.prepareSend(text: text, sessionKey: sessionKey)
+
+        // Also keep legacy messages array in sync
+        let message = Message(role: .user, content: text)
+        messages.append(message)
+
+        let frame: [String: Any] = [
+            "type": "req",
+            "id": prepared.messageId,
+            "method": "chat.send",
+            "params": [
+                "sessionKey": sessionKey,
+                "message": text,
+                "idempotencyKey": prepared.idempotencyKey
+            ]
+        ]
+        sendJSON(frame) { [weak self] success in
+            Task { @MainActor in
+                guard let self else { return }
+                if success {
+                    self.log("Message delivered to gateway")
+                } else {
+                    self.log("Failed to send message — queuing for retry")
+                    // Queue for offline retry
+                    self.sessionStore.enqueueOffline(
+                        messageId: prepared.messageId,
+                        sessionKey: sessionKey,
+                        content: text,
+                        idempotencyKey: prepared.idempotencyKey
+                    )
                 }
             }
         }
     }
-    
-    // MARK: - Exec Approval Handling
-    
-    private func handleExecApproval(_ evt: WSEvent) {
-        guard let payload = evt.payload,
-              let requestId = payload["requestId"]?.value as? String,
-              let command = payload["command"]?.value as? String else { return }
-        
-        // Add as system message so UI can show approve/deny
-        let msg = Message(
-            role: .system,
-            content: "Approval needed: \(command)",
-            serviceCard: ServiceCard(
-                type: .unknown,
-                fields: ["requestId": requestId, "command": command]
-            )
-        )
-        messages.append(msg)
-    }
-    
-    // MARK: - Reconnection
-    
-    private func handleDisconnect() {
-        status.isConnected = false
-        webSocket = nil
-        
-        guard isPaired else { return }
-        
-        reconnectTask?.cancel()
-        reconnectTask = Task {
-            reconnectAttempt += 1
-            let delay = min(pow(2.0, Double(reconnectAttempt)), maxReconnectDelay)
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            
-            guard !Task.isCancelled else { return }
-            connect()
+
+    // MARK: - Ping (application-level)
+
+    func sendPing() {
+        log("OUT ping")
+        let frame: [String: Any] = ["type": "ping"]
+        sendJSON(frame) { [weak self] success in
+            Task { @MainActor in
+                if success {
+                    self?.log("Ping sent — waiting for pong...")
+                } else {
+                    self?.log("Ping failed — WebSocket may be closed")
+                }
+            }
         }
     }
-    
+
+    // MARK: - Request status
+
+    func requestStatus() {
+        log("OUT req:status")
+        let frame: [String: Any] = [
+            "type": "req",
+            "id": UUID().uuidString,
+            "method": "status"
+        ]
+        sendJSON(frame) { [weak self] success in
+            Task { @MainActor in
+                if success {
+                    self?.log("Status request sent...")
+                } else {
+                    self?.log("Status request failed")
+                }
+            }
+        }
+    }
+
+    // MARK: - Internal send (for outbox drain)
+
+    func sendChatMessage(sessionKey: String, content: String, idempotencyKey: String) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let frame: [String: Any] = [
+                "type": "req",
+                "id": UUID().uuidString,
+                "method": "chat.send",
+                "params": [
+                    "sessionKey": sessionKey,
+                    "message": content,
+                    "idempotencyKey": idempotencyKey
+                ]
+            ]
+            sendJSON(frame) { success in
+                continuation.resume(returning: success)
+            }
+        }
+    }
+
+    // MARK: - Cron
+
+    func toggleCron(_ job: CronJob) {
+        // TODO: Send cron update via WebSocket
+    }
+
+    func runCron(_ job: CronJob) {
+        // TODO: Send cron run via WebSocket
+    }
+
     // MARK: - Helpers
-    
-    private func buildWebSocketURL(from url: URL) -> URL {
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-        // Ensure ws:// scheme
-        if components.scheme == "http" { components.scheme = "ws" }
-        if components.scheme == "https" { components.scheme = "wss" }
-        if components.scheme == nil { components.scheme = "ws" }
-        // Default port
-        if components.port == nil { components.port = 18789 }
-        return components.url!
-    }
-    
-    private func getOrCreateDeviceId() -> String {
-        if let existing = KeychainService.load(key: "deviceId") {
-            return existing
-        }
-        let newId = UUID().uuidString
-        KeychainService.save(key: "deviceId", value: newId)
-        return newId
-    }
-    
-    // MARK: - Persistence (Keychain)
-    
-    private func savePairing() {
-        if let url = gatewayURL {
-            KeychainService.save(key: "gatewayURL", value: url.absoluteString)
-        }
-        if let token = authToken {
-            KeychainService.save(key: "authToken", value: token)
-        }
-    }
-    
-    private func loadPairing() {
-        guard let urlStr = KeychainService.load(key: "gatewayURL"),
-              let url = URL(string: urlStr),
-              let token = KeychainService.load(key: "authToken") else {
-            isPaired = false
+
+    private func sendJSON(_ dict: [String: Any], completion: @escaping (Bool) -> Void) {
+        guard let ws = webSocket else {
+            logger.warning("sendJSON: no active WebSocket")
+            log("Cannot send — no WebSocket connection")
+            completion(false)
             return
         }
-        
+
+        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+              let text = String(data: data, encoding: .utf8) else {
+            logger.error("sendJSON: serialization failed")
+            log("Cannot send — JSON serialization failed")
+            completion(false)
+            return
+        }
+
+        logger.debug("Sending \(text.count) chars")
+
+        ws.send(.string(text)) { error in
+            if let error {
+                logger.error("WebSocket send error: \(error.localizedDescription, privacy: .public)")
+            }
+            completion(error == nil)
+        }
+    }
+
+    func log(_ entry: String) {
+        let ts = Self.logDateFormatter.string(from: Date())
+        let line = "[\(ts)] \(entry)"
+        connectionLog.append(line)
+        logger.log("\(entry, privacy: .public)")
+        if connectionLog.count > 500 {
+            connectionLog.removeFirst(connectionLog.count - 500)
+        }
+    }
+
+    private static let logDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
+    // MARK: - Persistence (Keychain)
+
+    private func savePairing() {
+        guard let url = gatewayURL, let token = authToken else { return }
+        KeychainService.save(key: "gatewayURL", value: url.absoluteString)
+        KeychainService.save(key: "authToken", value: token)
+        logger.info("Pairing saved to Keychain")
+        log("Credentials saved to Keychain")
+    }
+
+    private func loadPairing() {
+        guard let urlString = KeychainService.load(key: "gatewayURL"),
+              let token = KeychainService.load(key: "authToken"),
+              let url = URL(string: urlString) else {
+            logger.debug("No pairing in Keychain")
+            return
+        }
         gatewayURL = url
         authToken = token
-        deviceToken = KeychainService.load(key: "deviceToken")
         isPaired = true
-        
-        // Auto-connect on launch
-        connect()
+        logger.info("Loaded pairing: \(url.absoluteString, privacy: .public)")
     }
-    
+
     private func clearPairing() {
         KeychainService.delete(key: "gatewayURL")
         KeychainService.delete(key: "authToken")
-        KeychainService.delete(key: "deviceToken")
+        logger.info("Pairing cleared from Keychain")
+        log("Credentials removed from Keychain")
     }
 }

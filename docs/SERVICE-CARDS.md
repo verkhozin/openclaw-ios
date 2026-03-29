@@ -17,6 +17,7 @@ Agent actions with external services render as native cards, not text walls. Eac
 
 ### Calendar
 - Event: title, time, location, attendees. Actions: reschedule, cancel, "prepare brief"
+- Reminder: title, time, date, priority badge (high/medium/low), notes, calendar name
 - Conflict: two events side by side with "resolve"
 - Day summary: "Tomorrow: 3 meetings"
 

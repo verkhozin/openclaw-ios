@@ -4,8 +4,34 @@ What to build first. Ship in 2-3 weeks.
 
 ## Phase 1: Core (week 1-2)
 
-- [ ] QR pairing + WebSocket connection
-- [ ] Chat with streaming responses
+- [x] WebSocket connection with challenge-response handshake
+- [x] Ed25519 device signing (CryptoKit Curve25519)
+- [x] Keychain persistence (URL, token, device keypair)
+- [x] Connection test view with live log
+- [ ] Pairing flow UI: статусы подключения при входе
+  - [ ] "Connecting..." — открытие WebSocket
+  - [ ] "Waiting for challenge..." — ожидание connect.challenge
+  - [ ] "Authenticating..." — отправлен connect req, ждём ответ
+  - [ ] "Awaiting approval..." — NOT_PAIRED, устройство ждёт одобрения на стороне OpenClaw
+  - [ ] "Approved!" — hello-ok получен, переход на главный экран
+  - [ ] "Rejected" / "Error" — с причиной и кнопкой retry
+  - [ ] Polling или ожидание события approval пока оператор одобряет устройство на gateway
+- [ ] QR pairing (камера → парсинг JSON → auto-pair)
+- [x] Chat with streaming responses (chat.send + event:chat delta/final)
+- [ ] Session management & local cache (SQLite)
+  - [ ] SQLite schema: messages, sessions, client_metadata, session_metadata
+  - [ ] chat.history — загрузка последних N сообщений при первом открытии сессии
+  - [ ] Incremental sync: при повторном открытии — показать кэш, фоном дотянуть новое после lastSeq
+  - [ ] ContentParser: парсинг при получении → parsedBlocks (text/code/card), tags, hasCode, hasCard
+  - [ ] Pagination: скролл вверх → подгрузка старых сообщений из Gateway
+  - [ ] Offline read: показ кэшированных сообщений без сети
+  - [ ] Offline write: очередь отправки, отправка при reconnect
+  - [ ] unreadCount: локальный lastReadSeq per session
+  - [ ] Список сессий: сортировка по lastMessageAt из SQLite
+  - [ ] Очистка кэша: сессии не открытые 30 дней
+  - [ ] client_metadata (pinned, bookmarked, user tags) — отдельная таблица, не удаляется при очистке кэша
+  - [ ] session_metadata (lastReadSeq, pinned, muted, customTitle, folder)
+  - [ ] iCloud sync client_metadata через CloudKit (на будущее)
 - [ ] Code blocks with syntax highlighting + copy
 - [ ] Voice input (hold to record, speech-to-text, send as text)
 - [ ] Task queue (list active/recent subagents with status)

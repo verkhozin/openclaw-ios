@@ -13,19 +13,27 @@ struct SettingsView: View {
                         Text(gateway.status.isConnected ? "Connected" : "Disconnected")
                             .foregroundColor(gateway.status.isConnected ? Theme.success : Theme.error)
                     }
-                    
+
                     HStack {
                         Text("Model")
                         Spacer()
                         Text(gateway.status.model)
                             .foregroundColor(Theme.textSecondary)
                     }
-                    
+
                     HStack {
                         Text("Version")
                         Spacer()
                         Text(gateway.status.version)
                             .foregroundColor(Theme.textSecondary)
+                    }
+
+                    NavigationLink {
+                        ConnectionTestView()
+                            .environmentObject(gateway)
+                    } label: {
+                        Label("Connection Test", systemImage: "waveform.path.ecg")
+                            .foregroundColor(Theme.accent)
                     }
                 }
                 
@@ -43,6 +51,17 @@ struct SettingsView: View {
                         .foregroundColor(Theme.textMuted)
                 }
                 
+                #if DEBUG
+                Section("Developer") {
+                    NavigationLink {
+                        CardCatalogView()
+                    } label: {
+                        Label("Card Catalog", systemImage: "rectangle.grid.1x2")
+                            .foregroundColor(Theme.accent)
+                    }
+                }
+                #endif
+
                 Section {
                     Button("Disconnect Gateway", role: .destructive) {
                         gateway.unpair()

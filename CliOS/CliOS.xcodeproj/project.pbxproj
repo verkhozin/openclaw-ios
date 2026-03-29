@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		DC9026C12F79A78B004392B8 /* HighlightSwift in Frameworks */ = {isa = PBXBuildFile; productRef = DC9026C02F79A78B004392B8 /* HighlightSwift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		DC9819112F7866E200DFB35B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -29,9 +33,22 @@
 		DC98191A2F7866E200DFB35B /* CliOSUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CliOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		DC0000012F7900000000001A /* Exceptions for "CliOS" folder in "CliOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = DC9819022F7866E000DFB35B /* CliOS */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		DC9819052F7866E000DFB35B /* CliOS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				DC0000012F7900000000001A /* Exceptions for "CliOS" folder in "CliOS" target */,
+			);
 			path = CliOS;
 			sourceTree = "<group>";
 		};
@@ -52,6 +69,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DC9026C12F79A78B004392B8 /* HighlightSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +130,7 @@
 			);
 			name = CliOS;
 			packageProductDependencies = (
+				DC9026C02F79A78B004392B8 /* HighlightSwift */,
 			);
 			productName = CliOS;
 			productReference = DC9819032F7866E000DFB35B /* CliOS.app */;
@@ -195,6 +214,9 @@
 			);
 			mainGroup = DC9818FA2F7866E000DFB35B;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				DC9026BF2F79A78B004392B8 /* XCRemoteSwiftPackageReference "highlightswift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = DC9819042F7866E000DFB35B /* Products */;
 			projectDirPath = "";
@@ -400,6 +422,7 @@
 				DEVELOPMENT_TEAM = LU7S8ANMV5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CliOS/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -433,6 +456,7 @@
 				DEVELOPMENT_TEAM = LU7S8ANMV5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CliOS/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -580,6 +604,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		DC9026BF2F79A78B004392B8 /* XCRemoteSwiftPackageReference "highlightswift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/appstefan/highlightswift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.9;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		DC9026C02F79A78B004392B8 /* HighlightSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DC9026BF2F79A78B004392B8 /* XCRemoteSwiftPackageReference "highlightswift" */;
+			productName = HighlightSwift;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = DC9818FB2F7866E000DFB35B /* Project object */;
 }

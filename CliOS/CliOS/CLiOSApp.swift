@@ -9,11 +9,9 @@ struct CLiOSApp: App {
             if gateway.isPaired {
                 MainTabView()
                     .environmentObject(gateway)
-                    .preferredColorScheme(.dark)
             } else {
                 PairingView()
                     .environmentObject(gateway)
-                    .preferredColorScheme(.dark)
             }
         }
     }

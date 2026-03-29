@@ -9,4 +9,6 @@ struct GatewayStatus: Codable {
     var model: String = "unknown"
     var version: String = "unknown"
     var agentName: String = "Agent"
+    var connId: String = ""
+    var mainSessionKey: String = ""
 }

@@ -49,10 +49,10 @@ struct PairingView: View {
                 VStack(spacing: Theme.paddingS) {
                     TextField("Host (e.g. 192.168.1.100:18789)", text: $manualHost)
                         .textFieldStyle(.roundedBorder)
-                    
+
                     SecureField("Gateway Token", text: $manualToken)
                         .textFieldStyle(.roundedBorder)
-                    
+
                     Button("Connect") {
                         guard let url = URL(string: "ws://\(manualHost)") else { return }
                         gateway.pair(url: url, token: manualToken)
@@ -61,8 +61,23 @@ struct PairingView: View {
                 }
                 .padding(.horizontal, Theme.paddingL)
             }
-            
+
             Spacer()
+
+            // DEV: quick connect
+            #if DEBUG
+            Button {
+                gateway.pair(
+                    url: URL(string: "ws://138.124.85.254:18789")!,
+                    token: "0a7a1e581da351dd0ad93bf18b2fba1f40189d380abeb219"
+                )
+            } label: {
+                Text("DEV Connect")
+                    .font(Theme.fontCaption)
+                    .foregroundColor(Theme.textMuted)
+                    .padding(.bottom, Theme.paddingM)
+            }
+            #endif
         }
         .background(Theme.bg)
     }
