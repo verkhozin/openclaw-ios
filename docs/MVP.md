@@ -21,6 +21,11 @@ What to build first. Ship in 2-3 weeks.
 - [ ] Approve/deny push actions
 - [ ] Cron list with toggle + manual run
 
+## Backlog (add when needed)
+
+- [ ] Link handling: clickable URLs in messages, link shortening/preview
+- [ ] Cards deferred: github.issue, github.ci, github.commit, github.review, github.release, email.inbox, email.digest, email.sent, calendar.*, linear.*, task.result, task.queue, file.diff, file.saved, monitoring.*, infographics
+
 ## Phase 3: Integration (week 4+)
 
 - [ ] Share Sheet extension
