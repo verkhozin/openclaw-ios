@@ -129,6 +129,70 @@ chat.send ТРЕБУЕТ idempotencyKey:
 }
 ```
 
+## Device Pairing (первое подключение)
+
+Новое устройство при первом connect получит NOT_PAIRED. Gateway требует approve.
+
+Flow:
+1. iOS app отправляет connect frame с device identity
+2. Gateway отвечает ошибкой NOT_PAIRED, но создает pending pairing request
+3. Нужно одобрить запрос одним из способов:
+
+**Способ 1: Агент одобряет автоматически (для промпта юзера)**
+
+Юзер отправляет агенту промпт, агент выполняет:
+```javascript
+// 1. Подключиться к Gateway с admin scopes
+// 2. Получить список pending запросов
+ws.send(JSON.stringify({
+  type: "req", id: "list1", method: "device.pair.list", params: {}
+}));
+// Ответ содержит payload.pending[] с requestId
+
+// 3. Одобрить
+ws.send(JSON.stringify({
+  type: "req", id: "approve1", method: "device.pair.approve",
+  params: { requestId: "<requestId из pending>" }
+}));
+```
+
+**Способ 2: CLI команда**
+```bash
+openclaw devices list    # показать pending
+openclaw devices approve <requestId>
+```
+
+**Способ 3: Автоодобрение (для dev/testing)**
+
+В конфиге Gateway:
+```json
+{
+  "gateway": {
+    "controlUi": {
+      "dangerouslyDisableDeviceAuth": true
+    }
+  }
+}
+```
+Не использовать в продакшене!
+
+### Промпт для автоматического подключения
+
+Юзер копирует из iOS приложения и вставляет агенту:
+
+```
+Мне нужно подключить мобильное приложение CLiOS к этому Gateway.
+
+Сделай следующее:
+1. Открой порт Gateway для внешних подключений: установи gateway.bind в конфиге на "lan" или "0.0.0.0", перезапусти gateway
+2. Проверь что порт 18789 доступен извне: curl -s -o /dev/null -w "%{http_code}" http://<server-ip>:18789/
+3. Подожди 10 секунд -- я подключусь с телефона
+4. После этого выполни: подключись к Gateway по WebSocket, вызови device.pair.list, найди pending запрос с platform "ios" и clientId "openclaw-ios", вызови device.pair.approve с его requestId
+5. Отправь мне deep link: clios://connect?host=<server-ip>&port=18789&token=<gateway-token>
+```
+
+Агент делает всю работу. Юзер нажимает deep link, устройство одобрено, подключено.
+
 ## Gateway config (на сервере)
 
 Для доступа извне нужно:
