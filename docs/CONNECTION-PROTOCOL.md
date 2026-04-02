@@ -193,6 +193,39 @@ openclaw devices approve <requestId>
 
 Агент делает всю работу. Юзер нажимает deep link, устройство одобрено, подключено.
 
+## Deep Link (primary connection method)
+
+URL scheme: `clios://`
+
+Format:
+```
+clios://connect?host=<ip>&port=<port>&token=<gateway-token>
+```
+
+Example:
+```
+clios://connect?host=138.124.85.254&port=18789&token=0a7a1e581da351dd0ad93bf18b2fba1f40189d380abeb219
+```
+
+How it works:
+1. Agent generates deep link and sends it in chat (Telegram, Discord, etc.)
+2. User taps link on phone
+3. CLiOS opens, parses parameters, connects automatically
+4. Device pairing happens in background (agent auto-approves)
+
+Xcode setup required:
+- Register URL scheme `clios` in Info.plist
+- Handle incoming URL in App: parse `host`, `port`, `token` from query params
+- Call `GatewayService.pair(url:token:)` with parsed values
+
+QR code alternative:
+- Same deep link encoded as QR
+- For cases when user is on desktop and needs to connect phone
+
+Clipboard fallback:
+- User copies JSON `{"gatewayUrl":"ws://...","token":"..."}` 
+- App checks clipboard on launch, offers to connect
+
 ## Gateway config (на сервере)
 
 Для доступа извне нужно:
