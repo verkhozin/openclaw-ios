@@ -132,3 +132,5 @@ What CLiOS has that NeuChat and Pawd don't:
 - Session Timeline -- agent productivity at a glance
 - Beautiful design -- mesh gradients, animations, Apple-native feel
 - Quick Setup Wizard -- guided service connections
+- Smart Search -- one field searches chats, tasks, files, memory, commands
+- VPS as backend -- all data on user's server, zero cloud dependency
