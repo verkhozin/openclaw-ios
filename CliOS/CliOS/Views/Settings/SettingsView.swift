@@ -51,7 +51,6 @@ struct SettingsView: View {
                         .foregroundColor(Theme.textMuted)
                 }
                 
-                #if DEBUG
                 Section("Developer") {
                     NavigationLink {
                         CardCatalogView()
@@ -59,8 +58,23 @@ struct SettingsView: View {
                         Label("Card Catalog", systemImage: "rectangle.grid.1x2")
                             .foregroundColor(Theme.accent)
                     }
+
+                    NavigationLink {
+                        ShaderPlaygroundView()
+                    } label: {
+                        Label("Shader Playground", systemImage: "sparkles")
+                            .foregroundColor(Theme.accent)
+                    }
+
+                    NavigationLink {
+                        ChatScreenView()
+                            .navigationBarHidden(true)
+                            .toolbar(.hidden, for: .tabBar)
+                    } label: {
+                        Label("Chat Screen", systemImage: "bubble.left.fill")
+                            .foregroundColor(Theme.accent)
+                    }
                 }
-                #endif
 
                 Section {
                     Button("Disconnect Gateway", role: .destructive) {

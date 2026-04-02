@@ -36,70 +36,79 @@ struct EmailCard: View {
     private let captionFont: Font = .system(size: 12, weight: .regular)
     private let badgeFont: Font = .system(size: 11, weight: .medium)
 
+    private let emailBlue = Color(hex: "4285F4")
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Header: icon + type ... time
+        VStack(alignment: .leading, spacing: 0) {
+            // Colored header bar
             HStack(alignment: .center, spacing: 5) {
                 Image(systemName: type.icon)
                     .font(.system(size: 12))
-                    .foregroundColor(Theme.textSecondary)
 
-                Text(type.label)
-                    .foregroundColor(Theme.textSecondary)
+                Text("Email")
+
+                Text("· \(type.label)")
+                    .opacity(0.7)
 
                 if isUnread {
                     Circle()
-                        .fill(Theme.accent)
+                        .fill(.white)
                         .frame(width: 6, height: 6)
                 }
 
                 Spacer()
 
                 if let count {
-                    Text("\(count) messages")
+                    Text("\(count)")
                         .font(badgeFont)
-                        .foregroundColor(Theme.accent)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Theme.accent.opacity(0.12))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.white.opacity(0.2))
                         .clipShape(Capsule())
                 }
 
                 Text(time)
-                    .foregroundColor(Theme.textMuted)
+                    .opacity(0.7)
             }
             .font(headerFont)
+            .foregroundColor(.white)
+            .padding(.horizontal, Theme.paddingM)
+            .padding(.vertical, 10)
+            .background(emailBlue)
 
-            // From / To
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 4) {
-                    Text("From:")
-                        .foregroundColor(Theme.textMuted)
-                    Text(from)
-                        .foregroundColor(Theme.textSecondary)
+            // Card body
+            VStack(alignment: .leading, spacing: 10) {
+                // From / To
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        Text("From:")
+                            .foregroundColor(Theme.textMuted)
+                        Text(from)
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                    HStack(spacing: 4) {
+                        Text("To:")
+                            .foregroundColor(Theme.textMuted)
+                        Text(to)
+                            .foregroundColor(Theme.textSecondary)
+                    }
                 }
-                HStack(spacing: 4) {
-                    Text("To:")
-                        .foregroundColor(Theme.textMuted)
-                    Text(to)
-                        .foregroundColor(Theme.textSecondary)
-                }
+                .font(captionFont)
+
+                // Subject
+                Text(subject)
+                    .font(titleFont)
+                    .foregroundColor(Theme.textPrimary)
+
+                Divider()
+                    .background(Theme.border)
+
+                // Full body (markdown)
+                markdownBody
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .font(captionFont)
-
-            // Subject
-            Text(subject)
-                .font(titleFont)
-                .foregroundColor(Theme.textPrimary)
-
-            Divider()
-                .background(Theme.border)
-
-            // Full body (markdown)
-            markdownBody
-                .fixedSize(horizontal: false, vertical: true)
+            .padding(Theme.paddingM)
         }
-        .padding(Theme.paddingM)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius))

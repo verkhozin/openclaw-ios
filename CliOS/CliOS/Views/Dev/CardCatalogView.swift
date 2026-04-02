@@ -76,26 +76,56 @@ struct CardCatalogView: View {
 
                 // MARK: - Calendar
                 sectionHeader("Calendar")
-                cardPlaceholder(.calendarEvent, fields: [
-                    "title": "Design review",
-                    "time": "14:00 — 15:00",
-                    "location": "Google Meet",
-                    "attendees": "Egor, Alex, Dima"
-                ])
-                cardPlaceholder(.calendarConflict, fields: [
-                    "event1": "Design review @ 14:00",
-                    "event2": "Investor call @ 14:30",
-                    "overlap": "30 min"
-                ])
+                CalendarCard(
+                    title: "Design review",
+                    date: "Mar 29",
+                    startTime: "14:00",
+                    endTime: "15:00",
+                    duration: "1h",
+                    location: "Google Meet",
+                    attendees: ["Egor", "Alex", "Dima"]
+                )
+                CalendarCard(
+                    title: "Investor call — Q1 update & fundraising strategy",
+                    date: "Mar 31",
+                    startTime: "17:00",
+                    endTime: "17:30",
+                    duration: "30m",
+                    location: "",
+                    attendees: ["Egor", "Sarah", "Mike", "Anna", "Tom", "Lisa"]
+                )
 
-                // MARK: - Linear
-                sectionHeader("Linear")
-                cardPlaceholder(.linearIssue, fields: [
-                    "id": "CLI-42",
-                    "title": "WebSocket reconnect drops messages",
-                    "status": "In Progress",
-                    "priority": "Urgent"
-                ])
+                // MARK: - Tasks / Issues
+                sectionHeader("Tasks / Issues")
+                TaskCard(
+                    source: .linear,
+                    id: "CLI-42",
+                    title: "WebSocket reconnect drops messages on poor network",
+                    status: .inProgress,
+                    priority: .urgent,
+                    assignee: "Egor",
+                    labels: ["bug", "p0", "gateway"],
+                    project: "CLiOS"
+                )
+                TaskCard(
+                    source: .github,
+                    id: "#128",
+                    title: "Add rate limiting to gateway API endpoints",
+                    status: .todo,
+                    priority: .high,
+                    assignee: "Alex",
+                    labels: ["enhancement"],
+                    project: "verkh-tech/api"
+                )
+                TaskCard(
+                    source: .jira,
+                    id: "PROJ-451",
+                    title: "Migrate user sessions to Redis",
+                    status: .backlog,
+                    priority: .medium,
+                    assignee: "Dima",
+                    project: "Backend"
+                )
 
                 // MARK: - Files & Code
                 sectionHeader("Files & Code")
@@ -120,11 +150,67 @@ struct CardCatalogView: View {
                     "next": "Send deck by Friday"
                 ])
 
-                // MARK: - Unknown / Fallback
-                sectionHeader("Unknown (fallback)")
-                cardPlaceholder(.unknown, fields: [
-                    "raw": "Some unrecognized card type content that should render as formatted text"
-                ])
+                // MARK: - Generic (ServiceCardView)
+                sectionHeader("Generic Constructor")
+
+                ServiceCardView(
+                    headerColor: Color(hex: "635BFF"),
+                    headerIcon: "creditcard.fill",
+                    headerTitle: "Stripe",
+                    headerSubtitle: "· Payments",
+                    title: "Payment received — $2,400.00",
+                    badges: [
+                        CardBadge(label: "Succeeded", color: Theme.success, icon: "checkmark.circle.fill")
+                    ],
+                    meta: [
+                        CardMeta(label: "From:", value: "Acme Corp", icon: "person.circle"),
+                        CardMeta(label: "Invoice:", value: "#4821", icon: "doc.text")
+                    ]
+                )
+
+                ServiceCardView(
+                    headerColor: Color(hex: "362D59"),
+                    headerIcon: "exclamationmark.triangle.fill",
+                    headerTitle: "Sentry",
+                    title: "TypeError: Cannot read property 'id'",
+                    subtitle: "GatewayService.swift:142",
+                    badges: [
+                        CardBadge(label: "Critical", color: Theme.error, icon: "flame.fill"),
+                        CardBadge(label: "×12", color: Theme.warning)
+                    ],
+                    meta: [
+                        CardMeta(label: "First seen:", value: "2h ago", icon: "clock"),
+                        CardMeta(label: "Users:", value: "8", icon: "person.2")
+                    ]
+                )
+
+                ServiceCardView(
+                    headerColor: Color(hex: "2D9CDB"),
+                    headerIcon: "server.rack",
+                    headerTitle: "Server",
+                    headerSubtitle: "· gateway-01",
+                    meta: [
+                        CardMeta(label: "CPU:", value: "23%", icon: "cpu"),
+                        CardMeta(label: "RAM:", value: "1.2 / 4 GB", icon: "memorychip"),
+                        CardMeta(label: "Uptime:", value: "14d 6h", icon: "clock.arrow.circlepath")
+                    ]
+                )
+
+                ServiceCardView(
+                    headerColor: Color(hex: "5E6AD2"),
+                    headerIcon: "checklist",
+                    headerTitle: "Sprint",
+                    headerSubtitle: "· Week 14",
+                    title: "CLiOS v0.2 milestone",
+                    checklist: [
+                        ChecklistItem(text: "Design card components", isCompleted: true, assignee: "Egor"),
+                        ChecklistItem(text: "Implement WebSocket reconnect", isCompleted: true),
+                        ChecklistItem(text: "Add markdown rendering", isCompleted: true),
+                        ChecklistItem(text: "Write tests for CardParser", isCompleted: false, assignee: "Alex"),
+                        ChecklistItem(text: "Set up CI pipeline", isCompleted: false),
+                        ChecklistItem(text: "Deploy to TestFlight", isCompleted: false)
+                    ]
+                )
             }
             .padding(Theme.paddingM)
         }

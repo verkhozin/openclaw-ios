@@ -71,77 +71,90 @@ struct GitHubPRCard: View {
     private let diffFont: Font = .custom("JetBrainsMono-Medium", size: 11)
     private let badgeFont: Font = .system(size: 11, weight: .medium)
 
+    private let githubGray = Color(hex: "232925")
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Header: GitHub icon + type + #number ... diff
+        VStack(alignment: .leading, spacing: 0) {
+            // Colored header bar
             HStack(alignment: .center, spacing: 5) {
                 Image("github")
                     .renderingMode(.template)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 14, height: 14)
-                    .foregroundColor(Theme.textSecondary)
-                    .offset(y: -2)
+                    .offset(y: -1)
 
                 Text("Pull Request")
-                    .foregroundColor(Theme.textSecondary)
 
                 Text("#\(number)")
-                    .foregroundColor(Theme.textMuted)
+                    .opacity(0.7)
 
                 Spacer()
-
-                HStack(spacing: 3) {
-                    Text("+\(additions)")
-                        .foregroundColor(Theme.success)
-                    Text("-\(deletions)")
-                        .foregroundColor(Theme.error)
-                }
-                .font(diffFont)
             }
             .font(headerFont)
+            .foregroundColor(.white)
+            .padding(.horizontal, Theme.paddingM)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(githubGray)
 
-            // Title
-            Text(title)
-                .font(titleFont)
-                .foregroundColor(Theme.textPrimary)
-                .lineLimit(2)
+            // Card body
+            VStack(alignment: .leading, spacing: 8) {
+                // Title + diff on first line
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(title)
+                        .font(titleFont)
+                        .foregroundColor(Theme.textPrimary)
+                        .lineLimit(2)
 
-            // Branch: source → target
-            HStack(spacing: 4) {
-                Image("git-branch")
-                    .renderingMode(.template)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 11, height: 11)
-                    .foregroundColor(Theme.textMuted)
+                    Spacer(minLength: 0)
 
-                Text(branch)
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 8, weight: .medium))
-                    .foregroundColor(Theme.textMuted)
-                Text(targetBranch)
-            }
-            .font(captionFont)
-            .foregroundColor(Theme.textSecondary)
+                    HStack(spacing: 3) {
+                        Text("+\(additions)")
+                            .foregroundColor(Theme.success)
+                        Text("-\(deletions)")
+                            .foregroundColor(Theme.error)
+                    }
+                    .font(diffFont)
+                    .layoutPriority(1)
+                }
 
-            // Footer: badges ... author · repo
-            HStack(spacing: 6) {
-                badge(status.label, icon: status.icon, color: status.color)
-                badge("CI: \(ci.label)", icon: ci.icon, color: ci.color)
+                // Branch: source → target
+                HStack(spacing: 4) {
+                    Image("git-branch")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 11, height: 11)
+                        .foregroundColor(Theme.textMuted)
 
-                Spacer()
-
-                HStack(spacing: 3) {
-                    Text(author)
-                    Text("·").fontWeight(.bold)
-                    Text(repo)
+                    Text(branch)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(Theme.textMuted)
+                    Text(targetBranch)
                 }
                 .font(captionFont)
-                .foregroundColor(Theme.textMuted)
+                .foregroundColor(Theme.textSecondary)
+
+                // Footer: badges ... author · repo
+                HStack(spacing: 6) {
+                    badge(status.label, icon: status.icon, color: status.color)
+                    badge("CI: \(ci.label)", icon: ci.icon, color: ci.color)
+
+                    Spacer()
+
+                    HStack(spacing: 3) {
+                        Text(author)
+                        Text("·").fontWeight(.bold)
+                        Text(repo)
+                    }
+                    .font(captionFont)
+                    .foregroundColor(Theme.textMuted)
+                }
             }
+            .padding(Theme.paddingM)
         }
-        .padding(Theme.paddingM)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius))
