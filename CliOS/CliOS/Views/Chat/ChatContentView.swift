@@ -2,37 +2,133 @@ import SwiftUI
 import HighlightSwift
 
 struct ChatContentView: View {
-    private let sampleMessages: [(String, Bool)] = [
-        ("Check email and tell me if anything urgent", true),
-        ("On it.", false),
-        ("Checked your inbox. **12 new emails**, 1 flagged urgent from *Gleb*.\n\n---\n\n**Urgent:** Gleb asks to reschedule tomorrow's sync to **Friday 3pm**.\n\n---\n\n**GitHub:** 3 PR reviews requested — `openclaw/gateway#42`, `openclaw/gateway#38`, `openclaw/clios#7`.\n\n---\n\n**Newsletters:** TechCrunch, Hacker News digest, Anthropic blog.\n\n---\n\nThe rest is noise. Want me to handle the reschedule?", false),
-        ("Reschedule it, confirm with Gleb", true),
-        ("Done.", false),
-        ("Yeah push it", true),
-        ("Deployed to `aurum.openclaw.dev`.\n\n---\n\nDNS propagated, SSL active.\n\n---\n\n**Lighthouse scores:**\n- Performance: **94**\n- Accessibility: **100**\n- Best Practices: **92**\n- SEO: **97**\n\n---\n\nLive in ~2 minutes.", false),
-        ("How many tokens left today?", true),
-        ("You've used **340k** of **500k** daily.\n\n---\n\n- Remaining: `160k`\n- Resets in: *4h 20m*\n- Current session: `28k` on Opus, `12k` on Sonnet\n\n---\n\nAt current rate you'll hit the cap in ~3 hours.", false),
-        ("Show me the gateway config", true),
-        ("Here's your current setup:\n\n```swift\nimport Foundation\n\nstruct GatewayConfig {\n    let host = \"openclaw.local\"\n    let port: UInt16 = 18789\n    let model: Model = .opus\n    let maxTokens = 500_000\n    let dailyReset = \"04:00 UTC\"\n\n    var wsURL: URL {\n        URL(string: \"ws://\\(host):\\(port)/ws\")!\n    }\n\n    var isLocal: Bool {\n        host.hasSuffix(\".local\")\n    }\n\n    func validate() throws {\n        guard port > 0 else {\n            throw ConfigError.invalidPort\n        }\n        guard !host.isEmpty else {\n            throw ConfigError.missingHost\n        }\n    }\n\n    enum ConfigError: Error {\n        case invalidPort\n        case missingHost\n    }\n}\n```\n\nWant me to change anything?", false),
-    ]
+    @EnvironmentObject var gateway: GatewayService
+    @State private var initialMessageIDs: Set<UUID> = []
+    @State private var appearedMessages: Set<UUID> = []
+    @State private var isNearBottom = true
+
+    private var messages: [Message] {
+        gateway.sessionStore.currentMessages
+    }
 
     var body: some View {
         ZStack {
-            // Chat background — slightly gray
             Color(.secondarySystemBackground)
 
-            // Scrollable messages
-            ScrollView {
-                LazyVStack(spacing: 16) {
-                    Spacer().frame(height: 100)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 16) {
+                        Spacer().frame(height: 100)
 
-                    ForEach(Array(sampleMessages.enumerated()), id: \.offset) { _, message in
-                        ChatBubble(text: message.0, isUser: message.1)
+                        ForEach(messages) { message in
+                            // Messages loaded from cache don't animate
+                            let isInitial = initialMessageIDs.contains(message.id)
+                            let isNew = !isInitial && !appearedMessages.contains(message.id)
+
+                            ChatBubble(
+                                text: message.content,
+                                isUser: message.role == .user,
+                                isStreaming: message.isStreaming
+                            )
+                            .animation(.easeInOut(duration: 0.25), value: message.content)
+                            .animation(.easeInOut(duration: 0.25), value: message.isStreaming)
+                            .id(message.id)
+                            .offset(y: isNew ? 20 : 0)
+                            .opacity(isNew ? 0 : 1)
+                            .contextMenu {
+                                Button {
+                                    UIPasteboard.general.string = message.content
+                                } label: {
+                                    Label("Copy", systemImage: "doc.on.doc")
+                                }
+                            }
+                            .onAppear {
+                                guard isNew else { return }
+                                let delay: Double = message.role == .user ? 0 : 0.05
+                                withAnimation(.spring(response: 0.45, dampingFraction: 0.85).delay(delay)) {
+                                    appearedMessages.insert(message.id)
+                                }
+                            }
+                        }
+
+                        // Bottom anchor for scroll tracking
+                        Color.clear
+                            .frame(height: 1)
+                            .id("bottom")
+                            .onAppear { isNearBottom = true }
+                            .onDisappear { isNearBottom = false }
+
+                        Spacer().frame(height: 70)
                     }
-
-                    Spacer().frame(height: 70)
+                    .padding(.horizontal, Theme.paddingM)
                 }
-                .padding(.horizontal, Theme.paddingM)
+                .onChange(of: messages.count) { _, _ in
+                    guard isNearBottom, let last = messages.last else { return }
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+                .onChange(of: messages.last?.content) { _, _ in
+                    guard isNearBottom,
+                          let last = messages.last,
+                          last.isStreaming else { return }
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
+        }
+        .onAppear {
+            // Snapshot existing message IDs — these won't animate in
+            initialMessageIDs = Set(messages.map(\.id))
+        }
+    }
+}
+
+// MARK: - Streaming Text View (character-by-character reveal)
+
+struct StreamingTextView: View {
+    let fullText: String
+    let isStreaming: Bool
+    @State private var revealedCount: Int = 0
+    @State private var timer: Timer?
+
+    var body: some View {
+        Text(String(fullText.prefix(revealedCount)))
+            .font(.system(size: 16))
+            .onChange(of: fullText) { oldVal, newVal in
+                if isStreaming && newVal.count > revealedCount {
+                    animateNewCharacters(from: revealedCount, to: newVal.count)
+                }
+            }
+            .onAppear {
+                if isStreaming {
+                    revealedCount = max(0, fullText.count - 1)
+                    animateNewCharacters(from: revealedCount, to: fullText.count)
+                } else {
+                    revealedCount = fullText.count
+                }
+            }
+            .onDisappear {
+                timer?.invalidate()
+                timer = nil
+            }
+            .onChange(of: isStreaming) { _, streaming in
+                if !streaming {
+                    timer?.invalidate()
+                    timer = nil
+                    revealedCount = fullText.count
+                }
+            }
+    }
+
+    private func animateNewCharacters(from start: Int, to end: Int) {
+        timer?.invalidate()
+        var current = start
+        timer = Timer.scheduledTimer(withTimeInterval: 0.012, repeats: true) { t in
+            if current < end {
+                current += 1
+                revealedCount = current
+            } else {
+                t.invalidate()
             }
         }
     }
@@ -41,10 +137,12 @@ struct ChatContentView: View {
 struct ChatBubble: View {
     let text: String
     let isUser: Bool
+    var isStreaming: Bool = false
 
     var body: some View {
+        let showTyping = isStreaming && text.isEmpty
         let blocks = isUser ? [] : MessageParser.parse(text)
-        let isCompact = !isUser && isCompactMessage(blocks)
+        let isCompact = !isUser && !showTyping && isCompactMessage(blocks)
 
         HStack {
             if isUser { Spacer(minLength: 60) }
@@ -57,8 +155,27 @@ struct ChatBubble: View {
                     .padding(.bottom, 10)
                     .background(BubbleTailShape(isUser: true).fill(Color(.label)))
                     .foregroundStyle(Color(.systemBackground))
+            } else if showTyping {
+                TypingIndicator()
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 16)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
+                    .transition(.opacity)
+
+                Spacer(minLength: 40)
+            } else if isStreaming {
+                // Streaming agent reply — character reveal, no markdown parsing
+                StreamingTextView(fullText: text, isStreaming: true)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
             } else {
-                // Agent reply — card style
+                // Final agent reply — full markdown
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(blocks.enumerated()), id: \.offset) { idx, block in
                         switch block {
@@ -98,6 +215,8 @@ struct ChatBubble: View {
     private func isCompactMessage(_ blocks: [ContentBlock]) -> Bool {
         guard blocks.count == 1,
               case .text(_, let spans) = blocks[0] else { return false }
+        let hasHeading = spans.contains { if case .heading = $0 { return true }; return false }
+        guard !hasHeading else { return false }
         let totalLength = spans.reduce(0) { $0 + $1.text.count }
         let hasNewlines = spans.contains { $0.text.contains("\n") }
         return totalLength < 120 && !hasNewlines
@@ -120,10 +239,43 @@ struct ChatBubble: View {
                 result + Text(s)
                     .font(.system(size: 15, design: .monospaced))
                     .foregroundColor(.secondary)
+            case .heading(_, let level, let s):
+                result + Text(s)
+                    .font(.system(
+                        size: level == 1 ? 22 : level == 2 ? 19 : 17,
+                        weight: level <= 2 ? .bold : .semibold
+                    ))
             }
         }
     }
 }
+
+// MARK: - Typing Indicator
+
+struct TypingIndicator: View {
+    @State private var animating = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(Color(.tertiaryLabel))
+                    .frame(width: 8, height: 8)
+                    .offset(y: animating ? -4 : 2)
+                    .opacity(animating ? 0.9 : 0.35)
+                    .animation(
+                        .easeInOut(duration: 0.45)
+                        .repeatForever(autoreverses: true)
+                        .delay(Double(i) * 0.15),
+                        value: animating
+                    )
+            }
+        }
+        .onAppear { animating = true }
+    }
+}
+
+// MARK: - Code Block
 
 struct CodeBlockView: View {
     let language: String

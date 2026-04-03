@@ -47,19 +47,39 @@ enum DeviceCrypto {
 
     private static let keychainKey = "deviceSigningKey"
 
+    /// Cached in-memory to avoid repeated Keychain reads per launch
+    private static var _cachedKey: Curve25519.Signing.PrivateKey?
+
     private static func loadOrCreateKey() -> Curve25519.Signing.PrivateKey {
+        // Return cached key if we already loaded this session
+        if let cached = _cachedKey { return cached }
+
+        // Try to load from Keychain
         if let raw = KeychainService.load(key: keychainKey),
            let data = Data(base64Encoded: raw),
            let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: data) {
+            logger.info("Loaded existing keypair from Keychain (deviceId prefix: \(deviceIdPrefix(key)))")
+            _cachedKey = key
             return key
         }
 
-        logger.info("Generating new ed25519 keypair")
+        // Generate new keypair and persist
+        logger.info("No keypair in Keychain — generating new ed25519 keypair")
         let key = Curve25519.Signing.PrivateKey()
         let raw = key.rawRepresentation.base64EncodedString()
-        KeychainService.save(key: keychainKey, value: raw)
-        logger.info("Keypair saved to Keychain")
+        let saved = KeychainService.save(key: keychainKey, value: raw)
+        if saved {
+            logger.info("Keypair saved to Keychain (deviceId prefix: \(deviceIdPrefix(key)))")
+        } else {
+            logger.error("FAILED to save keypair to Keychain — key will be regenerated next launch!")
+        }
+        _cachedKey = key
         return key
+    }
+
+    private static func deviceIdPrefix(_ key: Curve25519.Signing.PrivateKey) -> String {
+        let hash = SHA256.hash(data: key.publicKey.rawRepresentation)
+        return hash.prefix(4).map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - base64url encoding

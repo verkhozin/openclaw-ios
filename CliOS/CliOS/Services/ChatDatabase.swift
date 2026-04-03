@@ -331,6 +331,17 @@ final class ChatDatabase {
         }
     }
 
+    // MARK: - Delete session
+
+    func deleteSession(key: String) {
+        queue.sync {
+            exec("DELETE FROM messages WHERE sessionKey = ?", params: [.text(key)])
+            exec("DELETE FROM outbox WHERE sessionKey = ?", params: [.text(key)])
+            exec("DELETE FROM sessions WHERE sessionKey = ?", params: [.text(key)])
+            logger.info("Deleted session \(key, privacy: .public)")
+        }
+    }
+
     // MARK: - Cleanup
 
     func cleanupStaleSessions(olderThanDays: Int = 30) {

@@ -58,7 +58,8 @@ enum KeychainService {
     
     // MARK: - Convenience
     
-    /// Delete all CLiOS keychain items
+    /// Delete pairing-related keychain items.
+    /// NOTE: Does NOT delete "deviceSigningKey" — that must persist across unpair/repair cycles.
     static func deleteAll() {
         let keys = ["gatewayURL", "authToken", "deviceToken", "deviceId"]
         keys.forEach { delete(key: $0) }

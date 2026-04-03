@@ -65,48 +65,57 @@ enum MessageParser {
     }
 
     /// Split text into alternating plain-text and fenced-code segments.
+    /// Uses line-by-line parsing to correctly handle ``` only at line start.
     private static func splitFencedBlocks(_ text: String) -> [RawSegment] {
         var segments: [RawSegment] = []
-        var remaining = text[...]
+        let lines = text.components(separatedBy: "\n")
 
-        while let openRange = remaining.range(of: "```") {
-            // Text before the fence
-            let before = String(remaining[remaining.startIndex..<openRange.lowerBound])
-            if !before.isEmpty {
-                segments.append(.text(before))
+        var textBuffer: [String] = []
+        var codeBuffer: [String] = []
+        var codeLang = ""
+        var inFence = false
+
+        func flushText() {
+            let joined = textBuffer.joined(separator: "\n")
+            if !joined.isEmpty {
+                segments.append(.text(joined))
             }
+            textBuffer = []
+        }
 
-            // After opening ```
-            let afterOpen = remaining[openRange.upperBound...]
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-            // Language tag is everything up to the next newline
-            let langEnd = afterOpen.firstIndex(of: "\n") ?? afterOpen.endIndex
-            let language = String(afterOpen[afterOpen.startIndex..<langEnd])
-                .trimmingCharacters(in: .whitespaces)
-
-            let bodyStart = langEnd < afterOpen.endIndex
-                ? afterOpen.index(after: langEnd)
-                : afterOpen.endIndex
-
-            // Find closing ```
-            let bodySlice = afterOpen[bodyStart...]
-            if let closeRange = bodySlice.range(of: "```") {
-                let body = String(bodySlice[bodySlice.startIndex..<closeRange.lowerBound])
+            if !inFence && trimmed.hasPrefix("```") {
+                // Opening fence
+                flushText()
+                codeLang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                inFence = true
+                codeBuffer = []
+            } else if inFence && trimmed.hasPrefix("```") {
+                // Closing fence
+                let body = codeBuffer.joined(separator: "\n")
                     .trimmingCharacters(in: .newlines)
-                segments.append(.fenced(language: language, body: body))
-                remaining = bodySlice[closeRange.upperBound...]
+                segments.append(.fenced(language: codeLang, body: body))
+                inFence = false
+                codeLang = ""
+                codeBuffer = []
+            } else if inFence {
+                codeBuffer.append(line)
             } else {
-                // Unclosed fence — treat rest as code
-                let body = String(bodySlice).trimmingCharacters(in: .newlines)
-                segments.append(.fenced(language: language, body: body))
-                break
+                textBuffer.append(line)
             }
         }
 
-        // Trailing text after last fence
-        let trailing = String(remaining)
-        if !trailing.isEmpty {
-            segments.append(.text(trailing))
+        // Handle unclosed fence
+        if inFence {
+            let body = codeBuffer.joined(separator: "\n")
+                .trimmingCharacters(in: .newlines)
+            if !body.isEmpty {
+                segments.append(.fenced(language: codeLang, body: body))
+            }
+        } else {
+            flushText()
         }
 
         return segments
@@ -122,13 +131,15 @@ enum MessageParser {
         for (i, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-            if trimmed.hasPrefix("## ") {
-                // Heading → bold
+            if trimmed.hasPrefix("### ") {
+                let heading = String(trimmed.dropFirst(4))
+                spans.append(.heading(level: 3, heading))
+            } else if trimmed.hasPrefix("## ") {
                 let heading = String(trimmed.dropFirst(3))
-                spans.append(.bold(heading))
+                spans.append(.heading(level: 2, heading))
             } else if trimmed.hasPrefix("# ") {
                 let heading = String(trimmed.dropFirst(2))
-                spans.append(.bold(heading))
+                spans.append(.heading(level: 1, heading))
             } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
                 // Bullet → "• " prefix + inline parse
                 let bullet = String(trimmed.dropFirst(2))

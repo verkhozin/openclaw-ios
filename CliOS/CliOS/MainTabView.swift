@@ -9,10 +9,10 @@ struct MainTabView: View {
     
     var body: some View {
         TabView(selection: $selectedTab) {
-            ChatView()
+            ChatListView()
                 .tabItem {
                     Image(systemName: "bubble.left.fill")
-                    Text("Chat")
+                    Text("Chats")
                 }
                 .tag(Tab.chat)
             
