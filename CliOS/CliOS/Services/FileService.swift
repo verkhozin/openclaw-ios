@@ -46,44 +46,29 @@ class FileService: ObservableObject {
         baseURL?.appendingPathComponent(path)
     }
 
-    // MARK: - List directory
+    // MARK: - List directory (via WebSocket agents.files.list)
 
     func listDirectory(path: String = "") async throws -> [FileItem] {
         if let cached = directoryCache[path] { return cached }
 
-        guard let base = baseURL, let token = token else {
+        guard GatewayService.shared.status.isConnected else {
             throw FileServiceError.notConfigured
         }
 
-        let url: URL
-        if path.isEmpty {
-            url = base
-        } else {
-            // Ensure trailing slash for directory listing
-            let dirPath = path.hasSuffix("/") ? path : path + "/"
-            url = base.appendingPathComponent(dirPath)
+        logger.info("Listing directory via WebSocket: /\(path, privacy: .public)")
+
+        var params: [String: Any] = ["agentId": "scout"]
+        if !path.isEmpty {
+            params["path"] = path
         }
 
-        logger.info("Listing directory: \(url.absoluteString, privacy: .public)")
+        let payload = try await GatewayService.shared.sendRequest(
+            method: "agents.files.list",
+            params: params
+        )
 
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 15
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let http = response as? HTTPURLResponse else {
-            throw FileServiceError.invalidResponse
-        }
-
-        guard http.statusCode == 200 else {
-            throw FileServiceError.httpError(http.statusCode)
-        }
-
-        let html = String(data: data, encoding: .utf8) ?? ""
-        let items = parseDirectoryListing(html: html, basePath: path)
+        let items = parseFilesListResponse(payload, basePath: path)
             .sorted { lhs, rhs in
-                // Directories first, then alphabetical
                 if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
                 return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
@@ -135,39 +120,33 @@ class FileService: ObservableObject {
         directoryCache.removeValue(forKey: path)
     }
 
-    // MARK: - Parse HTML directory listing
+    // MARK: - Parse agents.files.list response
 
-    /// Parses nginx-style or simple HTML directory listings.
-    /// Looks for <a href="name"> patterns, filters out parent links.
-    private func parseDirectoryListing(html: String, basePath: String) -> [FileItem] {
-        var items: [FileItem] = []
-
-        // Match <a href="...">...</a> patterns
-        let pattern = #"<a\s+[^>]*href="([^"]+)"[^>]*>([^<]*)</a>"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
-            return items
+    /// Parses the payload from agents.files.list WebSocket response.
+    /// Expected format: { "files": [ { "name": "...", "type": "file"|"directory", "size": 123 }, ... ] }
+    private func parseFilesListResponse(_ payload: [String: Any], basePath: String) -> [FileItem] {
+        // Try "files" key first, then "entries", then treat payload itself as array container
+        let entries: [[String: Any]]
+        if let files = payload["files"] as? [[String: Any]] {
+            entries = files
+        } else if let items = payload["entries"] as? [[String: Any]] {
+            entries = items
+        } else if let items = payload["items"] as? [[String: Any]] {
+            entries = items
+        } else {
+            logger.warning("No files array found in response: \(payload.keys.joined(separator: ", "), privacy: .public)")
+            return []
         }
 
-        let nsHTML = html as NSString
-        let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsHTML.length))
+        return entries.compactMap { entry -> FileItem? in
+            guard let name = entry["name"] as? String else { return nil }
 
-        for match in matches {
-            guard match.numberOfRanges >= 3 else { continue }
+            // Skip hidden files
+            if name.hasPrefix(".") { return nil }
 
-            let href = nsHTML.substring(with: match.range(at: 1))
-            let displayName = nsHTML.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Skip parent directory links and query/fragment links
-            if href == "../" || href == ".." || href == "/" || href == "./" { continue }
-            if href.hasPrefix("?") || href.hasPrefix("#") { continue }
-            if href.hasPrefix("http://") || href.hasPrefix("https://") { continue }
-
-            let isDir = href.hasSuffix("/")
-            let cleanName = isDir ? String(href.dropLast()) : href
-            let name = cleanName.removingPercentEncoding ?? cleanName
-
-            // Skip hidden files starting with .
-            if name.hasPrefix(".") { continue }
+            let isDir = (entry["type"] as? String) == "directory"
+                || (entry["isDirectory"] as? Bool) == true
+            let size = entry["size"] as? Int
 
             let itemPath: String
             if basePath.isEmpty {
@@ -177,38 +156,12 @@ class FileService: ObservableObject {
                 itemPath = base + name
             }
 
-            // Try to extract size from the listing line (nginx format: "01-Jan-2024 12:00  1234")
-            let size = extractSize(from: html, near: href)
-
-            items.append(FileItem(
+            return FileItem(
                 name: name,
                 path: itemPath,
                 isDirectory: isDir,
                 size: isDir ? nil : size
-            ))
+            )
         }
-
-        return items
-    }
-
-    /// Tries to extract file size from nginx-style directory listing HTML near a given href.
-    private func extractSize(from html: String, near href: String) -> Int? {
-        // Look for the line containing this href and find a size number after the date
-        // nginx format: <a href="file.txt">file.txt</a>  01-Jan-2024 12:00  1234\n
-        guard let hrefRange = html.range(of: href) else { return nil }
-        let afterHref = html[hrefRange.upperBound...]
-        guard let lineEnd = afterHref.firstIndex(of: "\n") else { return nil }
-        let line = String(afterHref[..<lineEnd])
-
-        // Find the last number on the line (that's usually the size)
-        let sizePattern = #"\s(\d+)\s*$"#
-        guard let sizeRegex = try? NSRegularExpression(pattern: sizePattern),
-              let sizeMatch = sizeRegex.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)),
-              sizeMatch.numberOfRanges >= 2 else {
-            return nil
-        }
-
-        let sizeStr = (line as NSString).substring(with: sizeMatch.range(at: 1))
-        return Int(sizeStr)
     }
 }

@@ -4,6 +4,18 @@ import os.log
 
 private let logger = Logger(subsystem: "com.clios.app", category: "GatewayService")
 
+enum GatewayRequestError: LocalizedError {
+    case sendFailed
+    case serverError(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .sendFailed: return "Failed to send request"
+        case .serverError(let msg): return msg
+        }
+    }
+}
+
 /// Main service: WebSocket connection to OpenClaw Gateway
 /// All data flows through here.
 @MainActor
@@ -30,6 +42,9 @@ class GatewayService: ObservableObject {
     private var pingTimer: Timer?
     private var reconnectAttempt: Int = 0
     private let maxReconnectAttempts = 5
+
+    /// Pending request continuations keyed by request ID.
+    private var pendingRequests: [String: CheckedContinuation<[String: Any], any Error>] = [:]
 
     private init() {
         logger.info("GatewayService init")
@@ -508,6 +523,18 @@ class GatewayService: ObservableObject {
     private func handleResponse(_ json: [String: Any]) {
         let payload = json["payload"] as? [String: Any] ?? [:]
         let payloadType = payload["type"] as? String
+        let reqId = json["id"] as? String
+
+        // Dispatch to pending continuation if one exists
+        if let reqId, let continuation = pendingRequests.removeValue(forKey: reqId) {
+            if let error = json["error"] as? [String: Any] {
+                let msg = error["message"] as? String ?? "Unknown error"
+                continuation.resume(throwing: GatewayRequestError.serverError(msg))
+            } else {
+                continuation.resume(returning: payload)
+            }
+            return
+        }
 
         if let error = json["error"] as? [String: Any] {
             let msg = error["message"] as? String ?? "Unknown error"
@@ -739,6 +766,31 @@ class GatewayService: ObservableObject {
 
     func runCron(_ job: CronJob) {
         // TODO: Send cron run via WebSocket
+    }
+
+    // MARK: - Request / Response
+
+    /// Send a WebSocket request and await the response payload.
+    func sendRequest(method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
+        let reqId = UUID().uuidString
+        let frame: [String: Any] = [
+            "type": "req",
+            "id": reqId,
+            "method": method,
+            "params": params
+        ]
+
+        return try await withCheckedThrowingContinuation { continuation in
+            pendingRequests[reqId] = continuation
+            sendJSON(frame) { [weak self] success in
+                Task { @MainActor in
+                    if !success {
+                        self?.pendingRequests.removeValue(forKey: reqId)
+                        continuation.resume(throwing: GatewayRequestError.sendFailed)
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Helpers

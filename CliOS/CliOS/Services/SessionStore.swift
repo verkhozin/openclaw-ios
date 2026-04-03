@@ -118,7 +118,7 @@ final class SessionStore: ObservableObject {
             )
             db.insertMessage(cached)
 
-            let preview = String(text.prefix(80))
+            let preview = Self.generatePreview(from: text)
             db.updateSessionLastMessage(sessionKey: sessionKey, timestamp: timestamp, preview: preview, seq: seq)
 
             if sessionKey == currentSessionKey {
@@ -213,15 +213,15 @@ final class SessionStore: ObservableObject {
             runId: nil
         )
         db.insertMessage(cached)
-        db.updateSessionLastMessage(sessionKey: sessionKey, timestamp: now, preview: String(text.prefix(80)), seq: cached.seq)
+        let sendPreview = Self.generatePreview(from: text)
+        db.updateSessionLastMessage(sessionKey: sessionKey, timestamp: now, preview: sendPreview, seq: cached.seq)
 
         // Add to UI immediately
         if sessionKey == currentSessionKey {
             currentMessages.append(cached.toMessage())
         }
 
-        let preview = String(text.prefix(80))
-        updateSessionInMemory(key: sessionKey, preview: preview, timestamp: now, unread: 0)
+        updateSessionInMemory(key: sessionKey, preview: sendPreview, timestamp: now, unread: 0)
         return (msgId, idempotencyKey)
     }
 
@@ -297,6 +297,60 @@ final class SessionStore: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    /// Generate a human-readable preview from message text.
+    /// Strips code blocks and replaces card blocks with friendly labels.
+    static func generatePreview(from text: String) -> String {
+        let blocks = MessageParser.parse(text)
+
+        var parts: [String] = []
+        for block in blocks {
+            switch block {
+            case .text(_, let spans):
+                let plainText = spans.map(\.text).joined()
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !plainText.isEmpty {
+                    parts.append(plainText)
+                }
+            case .code(_, let language, _):
+                if !language.isEmpty {
+                    parts.append("[\(language) code]")
+                } else {
+                    parts.append("[code]")
+                }
+            case .card(_, let card):
+                let label = cardPreviewLabel(for: card)
+                parts.append(label)
+            case .divider:
+                break
+            }
+        }
+
+        let joined = parts.joined(separator: " ")
+        if joined.isEmpty { return String(text.prefix(80)) }
+        return String(joined.prefix(100))
+    }
+
+    private static func cardPreviewLabel(for card: ServiceCard) -> String {
+        switch card.type {
+        case .githubPR:
+            let title = card.fields["title"] ?? ""
+            return title.isEmpty ? "📋 Pull Request" : "📋 PR: \(title)"
+        case .emailInbox, .emailDraft, .emailDigest:
+            let subject = card.fields["subject"] ?? ""
+            return subject.isEmpty ? "✉️ Email" : "✉️ \(subject)"
+        case .calendarEvent:
+            let title = card.fields["title"] ?? ""
+            return title.isEmpty ? "📅 Calendar event" : "📅 \(title)"
+        case .calendarConflict:
+            return "⚠️ Calendar conflict"
+        case .todo:
+            let title = card.fields["title"] ?? ""
+            return title.isEmpty ? "☑️ Todo" : "☑️ \(title)"
+        default:
+            return "📎 \(card.type.rawValue)"
+        }
+    }
 
     /// Extract a readable title from a session key like "agent:scout:abc123"
     static func readableTitle(from key: String) -> String {

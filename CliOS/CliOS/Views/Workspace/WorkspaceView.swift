@@ -36,7 +36,7 @@ struct WorkspaceView: View {
             // Content
             switch selectedSection {
             case .tasks:
-                TaskQueueContent()
+                TaskTrackerView()
             case .files:
                 FileExplorerView()
             case .memory:

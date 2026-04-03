@@ -82,6 +82,14 @@ struct SettingsView: View {
                         Label("File Explorer", systemImage: "folder.badge.gearshape")
                             .foregroundColor(Theme.accent)
                     }
+
+                    NavigationLink {
+                        TaskTrackerView()
+                            .toolbar(.hidden, for: .tabBar)
+                    } label: {
+                        Label("Task Tracker", systemImage: "checklist")
+                            .foregroundColor(Theme.accent)
+                    }
                 }
 
                 Section {
