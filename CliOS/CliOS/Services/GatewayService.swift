@@ -583,19 +583,24 @@ class GatewayService: ObservableObject {
             if let idx = messages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
                 messages[idx].content = text
             } else {
-                // No placeholder yet — create one
                 let m = Message(role: .agent, content: text, isStreaming: true)
                 messages.append(m)
+            }
+            // Also update SessionStore streaming message
+            if let idx = sessionStore.currentMessages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
+                sessionStore.currentMessages[idx].content = text
             }
 
         case .lifecycleEnd:
             logger.info("Agent run ended: \(event.runId.prefix(12))")
             log("Agent finished (run: \(event.runId.prefix(12))...)")
-            // Finalize: stop streaming, parse markdown into blocks
+            // Finalize legacy messages
             if let idx = messages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
                 messages[idx].isStreaming = false
                 messages[idx].blocks = MessageParser.parse(messages[idx].content)
             }
+            // Finalize SessionStore streaming message
+            sessionStore.finalizeAgentResponse()
             activeRunId = nil
         }
     }

@@ -6,6 +6,8 @@ struct ChatListView: View {
     @State private var paletteIndex = 0
     @State private var isRefreshing = false
     @State private var navigateToChat = false
+    @State private var knownSessionKeys: Set<String> = []
+    @State private var isOnScreen = false
 
     private static let palettes: [(blobs: [Color], highlights: [Color])] = [
         // Deep ocean + teal spark
@@ -36,41 +38,98 @@ struct ChatListView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            VStack(spacing: 0) {
+                // Fixed: gradient + header
+                sessionsHeader
+                    .background {
+                        ZStack {
+                            Color(hex: "1A1A2E")
+                            FluidGradient(
+                                blobs: currentPalette.blobs,
+                                highlights: currentPalette.highlights,
+                                speed: 0.25,
+                                blur: 0.85
+                            )
+                        }
+                        .ignoresSafeArea(edges: .top)
+                        .onAppear { startPaletteRotation() }
+                    }
+
+                // Fixed: white card with scrollable content inside
                 VStack(spacing: 0) {
-                    sessionsHeader
                     if sessions.isEmpty {
                         emptyState
                     } else {
-                        chatRows
+                        ScrollView {
+                            chatRows
+                                .padding(.top, 12)
+                        }
+                        .mask(
+                            VStack(spacing: 0) {
+                                LinearGradient(
+                                    colors: [.clear, .white],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                                .frame(height: 16)
+                                Color.white
+                            }
+                            .clipShape(
+                                UnevenRoundedRectangle(
+                                    topLeadingRadius: 24,
+                                    bottomLeadingRadius: 0,
+                                    bottomTrailingRadius: 0,
+                                    topTrailingRadius: 24,
+                                    style: .continuous
+                                )
+                            )
+                        )
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.bg)
+                .clipShape(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 24,
+                        bottomLeadingRadius: 0,
+                        bottomTrailingRadius: 0,
+                        topTrailingRadius: 24,
+                        style: .continuous
+                    )
+                )
             }
-            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-            .refreshable {
-                // This async block keeps scroll held in place until it returns
-                guard !isRefreshing else { return }
-                await MainActor.run { withAnimation { isRefreshing = true } }
-                // TODO: Trigger actual session refresh from gateway
-                try? await Task.sleep(for: .seconds(2))
-                await MainActor.run { withAnimation { isRefreshing = false } }
-            }
-            .tint(.clear)
-            .background(Theme.bg)
+            .background(Color(hex: "1A1A2E"))
+            .ignoresSafeArea(edges: .bottom)
             .navigationBarHidden(true)
             .navigationDestination(isPresented: $navigateToChat) {
                 ChatScreenView()
                     .navigationBarHidden(true)
                     .toolbar(.hidden, for: .tabBar)
             }
+            .onAppear {
+                isOnScreen = true
+                knownSessionKeys = Set(sessions.map(\.sessionKey))
+            }
+            .onDisappear {
+                isOnScreen = false
+            }
+            .onChange(of: sessions.map(\.sessionKey)) { old, new in
+                // When off-screen, silently accept new sessions
+                if !isOnScreen {
+                    knownSessionKeys = Set(new)
+                }
+            }
         }
+    }
+
+    private func isNewSession(_ key: String) -> Bool {
+        isOnScreen && !knownSessionKeys.contains(key)
     }
 
     // MARK: - Hero Header Card
 
     private var sessionsHeader: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Loader above title
             if isRefreshing {
                 HStack {
                     Spacer()
@@ -105,40 +164,9 @@ struct ChatListView: View {
                 .padding(.top, 14)
         }
         .padding(.horizontal, 20)
-        .padding(.bottom, 20)
+        .padding(.bottom, 28)
         .frame(height: isRefreshing ? 210 : 180)
         .animation(.easeInOut(duration: 0.35), value: isRefreshing)
-        .background {
-            GeometryReader { geo in
-                ZStack {
-                    Color(hex: "1A1A2E")
-                    FluidGradient(
-                        blobs: currentPalette.blobs,
-                        highlights: currentPalette.highlights,
-                        speed: 0.25,
-                        blur: 0.85
-                    )
-                }
-                // Tall enough to never show top edge on pull-to-refresh
-                .frame(width: geo.size.width + 4,
-                       height: geo.size.height + 600)
-                .offset(x: -2, y: -600)
-                .mask(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 0,
-                        bottomLeadingRadius: 32,
-                        bottomTrailingRadius: 32,
-                        topTrailingRadius: 0,
-                        style: .continuous
-                    )
-                    .frame(width: geo.size.width + 4,
-                           height: geo.size.height + 600)
-                    .offset(x: -2, y: -600)
-                )
-                .onAppear { startPaletteRotation() }
-            }
-        }
-        .padding(.bottom, 12)
     }
 
     // MARK: - Pinned Agents
@@ -185,6 +213,8 @@ struct ChatListView: View {
     private var chatRows: some View {
         LazyVStack(spacing: 0) {
             ForEach(sessions) { session in
+                let isNew = isNewSession(session.sessionKey)
+
                 SwipeToDeleteRow(
                     onDelete: {
                         withAnimation(.easeInOut(duration: 0.3)) {
@@ -201,6 +231,15 @@ struct ChatListView: View {
                             }
                     } label: {
                         ChatSessionRow(session: session)
+                    }
+                }
+                .offset(y: isNew ? 30 : 0)
+                .opacity(isNew ? 0 : 1)
+                .scaleEffect(isNew ? 0.95 : 1, anchor: .top)
+                .onAppear {
+                    guard isNew else { return }
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
+                        knownSessionKeys.insert(session.sessionKey)
                     }
                 }
             }

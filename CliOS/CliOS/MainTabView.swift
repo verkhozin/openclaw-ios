@@ -4,7 +4,7 @@ struct MainTabView: View {
     @State private var selectedTab: Tab = .chat
     
     enum Tab: String {
-        case chat, tasks, dashboard, settings
+        case chat, workspace, dashboard, settings
     }
     
     var body: some View {
@@ -16,12 +16,12 @@ struct MainTabView: View {
                 }
                 .tag(Tab.chat)
             
-            TaskQueueView()
+            WorkspaceView()
                 .tabItem {
-                    Image(systemName: "list.bullet.rectangle")
-                    Text("Tasks")
+                    Image(systemName: "folder.badge.gearshape")
+                    Text("Workspace")
                 }
-                .tag(Tab.tasks)
+                .tag(Tab.workspace)
             
             DashboardView()
                 .tabItem {

@@ -74,6 +74,14 @@ struct SettingsView: View {
                         Label("Chat Screen", systemImage: "bubble.left.fill")
                             .foregroundColor(Theme.accent)
                     }
+
+                    NavigationLink {
+                        FileExplorerView()
+                            .toolbar(.hidden, for: .tabBar)
+                    } label: {
+                        Label("File Explorer", systemImage: "folder.badge.gearshape")
+                            .foregroundColor(Theme.accent)
+                    }
                 }
 
                 Section {

@@ -25,13 +25,14 @@ enum PRStatus: String {
 }
 
 enum CIStatus: String {
-    case passed, failed, running
+    case passed, failed, running, pending
 
     var label: String {
         switch self {
         case .passed: "Passed"
         case .failed: "Failed"
         case .running: "Running"
+        case .pending: "Pending"
         }
     }
 
@@ -40,6 +41,7 @@ enum CIStatus: String {
         case .passed: Theme.success
         case .failed: Theme.error
         case .running: Theme.warning
+        case .pending: Theme.textMuted
         }
     }
 
@@ -48,6 +50,7 @@ enum CIStatus: String {
         case .passed: "checkmark.circle.fill"
         case .failed: "xmark.circle.fill"
         case .running: "arrow.triangle.2.circlepath"
+        case .pending: "clock.fill"
         }
     }
 }

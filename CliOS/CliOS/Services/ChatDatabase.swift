@@ -227,10 +227,10 @@ final class ChatDatabase {
             var params: [SQLParam] = [.text(sessionKey)]
 
             if let before = beforeSeq {
-                sql = "SELECT * FROM messages WHERE sessionKey = ? AND seq < ? ORDER BY seq DESC LIMIT ?"
+                sql = "SELECT * FROM messages WHERE sessionKey = ? AND seq < ? ORDER BY timestamp DESC, seq DESC LIMIT ?"
                 params.append(.int(before))
             } else {
-                sql = "SELECT * FROM messages WHERE sessionKey = ? ORDER BY seq DESC LIMIT ?"
+                sql = "SELECT * FROM messages WHERE sessionKey = ? ORDER BY timestamp DESC, seq DESC LIMIT ?"
             }
             params.append(.int(Int64(limit)))
 

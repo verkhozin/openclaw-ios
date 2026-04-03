@@ -25,6 +25,8 @@ struct ServiceCard: Identifiable, Codable {
         case fileDiff = "file.diff"
         // Lead pipeline
         case lead = "lead"
+        // Todo
+        case todo = "todo"
         // Generic
         case unknown
     }

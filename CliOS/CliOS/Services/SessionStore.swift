@@ -46,14 +46,28 @@ final class SessionStore: ObservableObject {
     }
 
     /// Switch to a session: load cached messages, mark read.
+    /// If already viewing this session, just refreshes from DB without losing streaming state.
     func openSession(key: String) {
+        let isSameSession = currentSessionKey == key
         currentSessionKey = key
         ensureSession(key: key)
 
         // Load from cache
         let cached = db.messages(for: key, limit: 50)
-        currentMessages = cached.map { $0.toMessage() }
-        streamingMessage = nil
+
+        if isSameSession && streamingMessage != nil {
+            // Don't clobber in-progress streaming — just merge any new persisted messages
+            let existingIDs = Set(currentMessages.map(\.id))
+            let newMessages = cached.map { $0.toMessage() }.filter { !existingIDs.contains($0.id) }
+            if !newMessages.isEmpty {
+                // Insert at correct positions (before streaming message)
+                let streamIdx = currentMessages.lastIndex(where: { $0.isStreaming }) ?? currentMessages.endIndex
+                currentMessages.insert(contentsOf: newMessages, at: streamIdx)
+            }
+        } else {
+            currentMessages = cached.map { $0.toMessage() }
+            streamingMessage = nil
+        }
 
         // Rebuild seenSeqs from loaded messages to prevent dupes on reconnect
         seenSeqs = Set(cached.compactMap { $0.seq > 0 ? $0.seq : nil })
@@ -64,7 +78,7 @@ final class SessionStore: ObservableObject {
         }
 
         loadSessions()
-        logger.info("Opened session \(key, privacy: .public) with \(cached.count) cached messages")
+        logger.info("Opened session \(key, privacy: .public) with \(cached.count) cached messages (same=\(isSameSession))")
     }
 
     // MARK: - Receive messages from gateway
@@ -161,11 +175,18 @@ final class SessionStore: ObservableObject {
     /// Insert an empty streaming placeholder so the UI shows a typing indicator.
     func beginAgentResponse(sessionKey: String) {
         guard sessionKey == currentSessionKey else { return }
-        // Only add if there isn't already a streaming message
         guard streamingMessage == nil else { return }
         let msg = Message(role: .agent, content: "", isStreaming: true)
         streamingMessage = msg
         currentMessages.append(msg)
+    }
+
+    /// Finalize the streaming message — stop typing indicator, mark as complete.
+    func finalizeAgentResponse() {
+        streamingMessage = nil
+        if let idx = currentMessages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
+            currentMessages[idx].isStreaming = false
+        }
     }
 
     // MARK: - Send messages

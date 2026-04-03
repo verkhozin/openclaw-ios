@@ -83,57 +83,6 @@ struct ChatContentView: View {
     }
 }
 
-// MARK: - Streaming Text View (character-by-character reveal)
-
-struct StreamingTextView: View {
-    let fullText: String
-    let isStreaming: Bool
-    @State private var revealedCount: Int = 0
-    @State private var timer: Timer?
-
-    var body: some View {
-        Text(String(fullText.prefix(revealedCount)))
-            .font(.system(size: 16))
-            .onChange(of: fullText) { oldVal, newVal in
-                if isStreaming && newVal.count > revealedCount {
-                    animateNewCharacters(from: revealedCount, to: newVal.count)
-                }
-            }
-            .onAppear {
-                if isStreaming {
-                    revealedCount = max(0, fullText.count - 1)
-                    animateNewCharacters(from: revealedCount, to: fullText.count)
-                } else {
-                    revealedCount = fullText.count
-                }
-            }
-            .onDisappear {
-                timer?.invalidate()
-                timer = nil
-            }
-            .onChange(of: isStreaming) { _, streaming in
-                if !streaming {
-                    timer?.invalidate()
-                    timer = nil
-                    revealedCount = fullText.count
-                }
-            }
-    }
-
-    private func animateNewCharacters(from start: Int, to end: Int) {
-        timer?.invalidate()
-        var current = start
-        timer = Timer.scheduledTimer(withTimeInterval: 0.012, repeats: true) { t in
-            if current < end {
-                current += 1
-                revealedCount = current
-            } else {
-                t.invalidate()
-            }
-        }
-    }
-}
-
 struct ChatBubble: View {
     let text: String
     let isUser: Bool
@@ -142,7 +91,8 @@ struct ChatBubble: View {
     var body: some View {
         let showTyping = isStreaming && text.isEmpty
         let blocks = isUser ? [] : MessageParser.parse(text)
-        let isCompact = !isUser && !showTyping && isCompactMessage(blocks)
+        let isCompact = !isUser && !showTyping && !isStreaming && isCompactMessage(blocks)
+        let isCardOnly = !isUser && !showTyping && !isStreaming && isCardOnlyMessage(blocks)
 
         HStack {
             if isUser { Spacer(minLength: 60) }
@@ -150,6 +100,8 @@ struct ChatBubble: View {
             if isUser {
                 Text(text)
                     .font(.system(size: 16))
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .padding(.bottom, 10)
@@ -165,17 +117,8 @@ struct ChatBubble: View {
                     .transition(.opacity)
 
                 Spacer(minLength: 40)
-            } else if isStreaming {
-                // Streaming agent reply — character reveal, no markdown parsing
-                StreamingTextView(fullText: text, isStreaming: true)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 20))
-                    .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
             } else {
-                // Final agent reply — full markdown
+                // Agent reply — markdown rendered both during streaming and after
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(blocks.enumerated()), id: \.offset) { idx, block in
                         switch block {
@@ -188,10 +131,8 @@ struct ChatBubble: View {
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
                         case .card(_, let card):
-                            Text("[\(card.type.rawValue) card]")
-                                .font(.system(size: 15, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 16)
+                            ChatCardView(card: card)
+                                .padding(.horizontal, 8)
                                 .padding(.vertical, 6)
                         case .divider:
                             Divider()
@@ -199,15 +140,38 @@ struct ChatBubble: View {
                                 .padding(.vertical, 14)
                         }
                     }
+
+                    // Streaming cursor
+                    if isStreaming {
+                        StreamingCursor()
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 6)
+                    }
                 }
-                .padding(.vertical, 12)
+                .padding(.vertical, isCardOnly ? 0 : 12)
                 .fixedSize(horizontal: isCompact, vertical: false)
                 .frame(maxWidth: isCompact ? nil : .infinity, alignment: .leading)
-                .background(Color(.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 20))
-                .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
+                .if(!isCardOnly) { view in
+                    view
+                        .background(Color(.systemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
+                }
+                .animation(.spring(response: 0.3, dampingFraction: 0.85), value: text)
 
                 if isCompact { Spacer(minLength: 40) }
+            }
+        }
+    }
+
+    /// True if message contains only cards (and optionally dividers) — no text/code.
+    private func isCardOnlyMessage(_ blocks: [ContentBlock]) -> Bool {
+        guard !blocks.isEmpty else { return false }
+        return blocks.allSatisfy { block in
+            switch block {
+            case .card: return true
+            case .divider: return true
+            default: return false
             }
         }
     }
@@ -250,7 +214,134 @@ struct ChatBubble: View {
     }
 }
 
+// MARK: - Card Router
+
+struct ChatCardView: View {
+    let card: ServiceCard
+
+    var body: some View {
+        switch card.type {
+        case .githubPR:
+            GitHubPRCard(
+                number: Int(f("number")) ?? 0,
+                title: f("title"),
+                status: PRStatus(rawValue: f("status")) ?? .open,
+                author: f("author"),
+                repo: f("repo"),
+                branch: f("branch"),
+                targetBranch: f("targetBranch", fallback: "main"),
+                ci: CIStatus(rawValue: f("ci")) ?? .running,
+                additions: Int(f("additions")) ?? 0,
+                deletions: Int(f("deletions")) ?? 0
+            )
+
+        case .emailInbox, .emailDraft, .emailDigest:
+            EmailCard(
+                type: emailType,
+                from: f("from"),
+                to: f("to"),
+                subject: f("subject"),
+                content: f("content"),
+                time: f("time"),
+                isUnread: f("unread") == "true",
+                count: Int(f("count"))
+            )
+
+        case .calendarEvent:
+            CalendarCard(
+                title: f("title"),
+                date: f("date"),
+                startTime: f("startTime"),
+                endTime: f("endTime"),
+                duration: f("duration"),
+                location: f("location"),
+                attendees: f("attendees").components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            )
+
+        case .calendarConflict:
+            CalendarReminderCard(
+                title: f("title"),
+                time: f("time"),
+                date: f("date"),
+                priority: ReminderPriority(rawValue: f("priority")) ?? .medium,
+                notes: f("details"),
+                calendar: f("calendar", fallback: "Calendar")
+            )
+
+        case .todo:
+            ServiceCardView(
+                headerColor: Color(hex: "5E6AD2"),
+                headerIcon: "checklist",
+                headerTitle: f("title", fallback: "Todo"),
+                meta: {
+                    let updated = f("updated")
+                    return updated.isEmpty ? [] : [CardMeta(label: "Updated:", value: updated, icon: "clock")]
+                }(),
+                checklist: parseTodoItems(f("items"))
+            )
+
+        default:
+            // Fallback for unknown/unsupported card types
+            VStack(alignment: .leading, spacing: 6) {
+                Text(card.type.rawValue)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                ForEach(card.fields.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                    HStack(alignment: .top, spacing: 4) {
+                        Text("\(key):")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Text(value)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.primary)
+                    }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.systemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private func f(_ key: String, fallback: String = "") -> String {
+        card.fields[key] ?? fallback
+    }
+
+    /// Parses "Text|false, Text|true" format into ChecklistItems
+    private func parseTodoItems(_ raw: String) -> [ChecklistItem] {
+        raw.components(separatedBy: ",").compactMap { entry in
+            let parts = entry.trimmingCharacters(in: .whitespaces).components(separatedBy: "|")
+            guard let text = parts.first, !text.isEmpty else { return nil }
+            let done = parts.count > 1 && parts[1].trimmingCharacters(in: .whitespaces) == "true"
+            return ChecklistItem(text: text, isCompleted: done)
+        }
+    }
+
+    private var emailType: EmailType {
+        switch card.type {
+        case .emailDraft: return .draft
+        case .emailDigest: return .digest
+        default: return .inbox
+        }
+    }
+}
+
 // MARK: - Typing Indicator
+
+/// Blinking cursor shown at the end of a streaming message
+struct StreamingCursor: View {
+    @State private var visible = true
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 1)
+            .fill(Color(.tertiaryLabel))
+            .frame(width: 2, height: 16)
+            .opacity(visible ? 1 : 0)
+            .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: visible)
+            .onAppear { visible = false }
+    }
+}
 
 struct TypingIndicator: View {
     @State private var animating = false
@@ -533,6 +624,19 @@ struct GlassInputModifier: ViewModifier {
         } else {
             content
                 .background(.ultraThinMaterial, in: Capsule())
+        }
+    }
+}
+
+// MARK: - Conditional View Modifier
+
+extension View {
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
         }
     }
 }
