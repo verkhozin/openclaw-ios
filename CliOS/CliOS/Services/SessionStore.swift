@@ -32,7 +32,7 @@ final class SessionStore: ObservableObject {
         if db.session(for: key) == nil {
             let session = ChatSession(
                 sessionKey: key,
-                title: title ?? key,
+                title: title ?? Self.readableTitle(from: key),
                 lastMessageAt: Int64(Date().timeIntervalSince1970 * 1000),
                 lastMessagePreview: "",
                 unreadCount: 0,
@@ -55,23 +55,36 @@ final class SessionStore: ObservableObject {
         currentMessages = cached.map { $0.toMessage() }
         streamingMessage = nil
 
+        // Rebuild seenSeqs from loaded messages to prevent dupes on reconnect
+        seenSeqs = Set(cached.compactMap { $0.seq > 0 ? $0.seq : nil })
+
         // Mark as read
         if let lastSeq = cached.last?.seq {
             db.markRead(sessionKey: key, seq: lastSeq)
         }
 
-        loadSessions() // refresh unread counts
+        loadSessions()
         logger.info("Opened session \(key, privacy: .public) with \(cached.count) cached messages")
     }
 
     // MARK: - Receive messages from gateway
+
+    /// Track seen seq numbers to prevent duplicates from reconnects
+    private var seenSeqs: Set<Int64> = []
 
     /// Called when a chat delta/final event arrives.
     func handleChatEvent(sessionKey: String, state: String, text: String, seq: Int64, timestamp: Int64, runId: String?) {
         ensureSession(key: sessionKey)
 
         if state == "final" {
-            // Finalize: persist to SQLite
+            // Dedup: skip if we already processed this seq for this session
+            if seq > 0 && seenSeqs.contains(seq) {
+                logger.info("Skipping duplicate final seq=\(seq)")
+                return
+            }
+            if seq > 0 { seenSeqs.insert(seq) }
+
+            // Persist to SQLite (INSERT OR REPLACE handles DB-level dedup by id)
             let parsed = ContentParser.parse(text)
             let msgId = runId ?? UUID().uuidString
 
@@ -94,39 +107,44 @@ final class SessionStore: ObservableObject {
             let preview = String(text.prefix(80))
             db.updateSessionLastMessage(sessionKey: sessionKey, timestamp: timestamp, preview: preview, seq: seq)
 
-            // Update UI if this is the current session
             if sessionKey == currentSessionKey {
                 // Replace streaming message with final
                 if streamingMessage != nil {
                     streamingMessage = nil
-                    if let last = currentMessages.last, last.role == .agent, last.isStreaming {
-                        currentMessages[currentMessages.count - 1].content = text
-                        currentMessages[currentMessages.count - 1].isStreaming = false
+                    if let idx = currentMessages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
+                        currentMessages[idx].content = text
+                        currentMessages[idx].isStreaming = false
                     } else {
                         currentMessages.append(cached.toMessage())
                     }
                 } else {
-                    currentMessages.append(cached.toMessage())
+                    let alreadyHave = seq > 0 && currentMessages.contains(where: { msg in
+                        msg.role == .agent && msg.content == text && !msg.isStreaming
+                    })
+                    if !alreadyHave {
+                        currentMessages.append(cached.toMessage())
+                    }
                 }
                 db.markRead(sessionKey: sessionKey, seq: seq)
+                // Update session in-memory immediately (no full reload delay)
+                updateSessionInMemory(key: sessionKey, preview: preview, timestamp: timestamp, unread: 0)
             } else {
-                // Increment unread for other sessions
+                let currentUnread = sessions.first(where: { $0.sessionKey == sessionKey })?.unreadCount ?? 0
+                updateSessionInMemory(key: sessionKey, preview: preview, timestamp: timestamp, unread: currentUnread + 1)
                 if var session = sessions.first(where: { $0.sessionKey == sessionKey }) {
-                    session.unreadCount += 1
+                    session.unreadCount = currentUnread + 1
                     db.upsertSession(session)
                 }
             }
 
-            loadSessions()
             logger.info("Persisted message to \(sessionKey, privacy: .public) seq=\(seq)")
 
         } else if state == "delta" {
-            // Streaming: keep in memory only
             if sessionKey == currentSessionKey {
                 if streamingMessage != nil {
                     // Update existing streaming message
-                    if let last = currentMessages.last, last.role == .agent, last.isStreaming {
-                        currentMessages[currentMessages.count - 1].content = text
+                    if let idx = currentMessages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
+                        currentMessages[idx].content = text
                     }
                 } else {
                     // Start new streaming message
@@ -136,6 +154,18 @@ final class SessionStore: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: - Typing indicator
+
+    /// Insert an empty streaming placeholder so the UI shows a typing indicator.
+    func beginAgentResponse(sessionKey: String) {
+        guard sessionKey == currentSessionKey else { return }
+        // Only add if there isn't already a streaming message
+        guard streamingMessage == nil else { return }
+        let msg = Message(role: .agent, content: "", isStreaming: true)
+        streamingMessage = msg
+        currentMessages.append(msg)
     }
 
     // MARK: - Send messages
@@ -169,8 +199,20 @@ final class SessionStore: ObservableObject {
             currentMessages.append(cached.toMessage())
         }
 
-        loadSessions()
+        let preview = String(text.prefix(80))
+        updateSessionInMemory(key: sessionKey, preview: preview, timestamp: now, unread: 0)
         return (msgId, idempotencyKey)
+    }
+
+    // MARK: - In-memory session update
+
+    /// Update session list in-memory for instant UI feedback (no SQLite roundtrip).
+    private func updateSessionInMemory(key: String, preview: String, timestamp: Int64, unread: Int) {
+        if let idx = sessions.firstIndex(where: { $0.sessionKey == key }) {
+            sessions[idx].lastMessagePreview = preview
+            sessions[idx].lastMessageAt = timestamp
+            sessions[idx].unreadCount = unread
+        }
     }
 
     // MARK: - Offline outbox
@@ -214,10 +256,36 @@ final class SessionStore: ObservableObject {
         logger.info("Loaded \(older.count) older messages")
     }
 
+    // MARK: - Delete
+
+    func deleteSession(key: String) {
+        db.deleteSession(key: key)
+        sessions.removeAll { $0.sessionKey == key }
+        if currentSessionKey == key {
+            currentSessionKey = ""
+            currentMessages = []
+            streamingMessage = nil
+        }
+    }
+
     // MARK: - Cleanup
 
     func cleanupStale() {
         db.cleanupStaleSessions()
         loadSessions()
+    }
+
+    // MARK: - Helpers
+
+    /// Extract a readable title from a session key like "agent:scout:abc123"
+    static func readableTitle(from key: String) -> String {
+        let parts = key.split(separator: ":")
+        // "agent:scout:abc123" → "Scout"
+        // "some-uuid" → "New Chat"
+        if parts.count >= 2 {
+            let name = String(parts[1])
+            return name.prefix(1).uppercased() + name.dropFirst()
+        }
+        return "New Chat"
     }
 }

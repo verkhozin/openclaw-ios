@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct ChatButtonsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var gateway: GatewayService
     @Binding var isComposing: Bool
     @Binding var showCommands: Bool
     @State private var messageText = ""
@@ -16,7 +18,7 @@ struct ChatButtonsView: View {
             // MARK: - Left button (Back <-> Paperclip)
 
             if !showCommands {
-                Button(action: {}) {
+                Button(action: { dismiss() }) {
                     HStack(spacing: 6) {
                         Image(systemName: isComposing ? "paperclip" : "chevron.left")
                             .contentTransition(.symbolEffect(.replace.downUp.byLayer))
@@ -105,8 +107,9 @@ struct ChatButtonsView: View {
             if !showCommands {
                 Button(action: {
                     if isComposing {
-                        if !messageText.trimmingCharacters(in: .whitespaces).isEmpty {
-                            // TODO: send message
+                        let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !text.isEmpty {
+                            gateway.sendMessage(text)
                             messageText = ""
                         }
                         withAnimation(transition) {

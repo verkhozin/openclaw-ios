@@ -138,6 +138,10 @@ struct EmailCard: View {
                 result + Text(s)
                     .font(.custom("JetBrainsMono-Regular", size: 13))
                     .foregroundColor(Theme.accent)
+            case .heading(_, let level, let s):
+                result + Text(s)
+                    .font(.system(size: level == 1 ? 18 : level == 2 ? 16 : 15, weight: .bold))
+                    .foregroundColor(Theme.textPrimary)
             }
         }
         .lineSpacing(4)

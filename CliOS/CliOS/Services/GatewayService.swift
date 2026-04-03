@@ -148,7 +148,7 @@ class GatewayService: ObservableObject {
                 ] as [String: Any],
                 "role": "operator",
                 "scopes": ["operator.read", "operator.write", "operator.approvals", "operator.pairing"],
-                "caps": [] as [String],
+                "caps": ["cards.v1"],
                 "commands": [] as [String],
                 "permissions": [:] as [String: Any],
                 "auth": [
@@ -415,7 +415,9 @@ class GatewayService: ObservableObject {
             // payload.message.content[0].text = "..."
             let src = json["payload"] as? [String: Any] ?? json
             let state = src["state"] as? String ?? ""
-            let sessionKey = src["sessionKey"] as? String ?? status.mainSessionKey
+            // Use sessionKey from payload; fallback to current open session, then mainSessionKey
+            let sessionKey = (src["sessionKey"] as? String)
+                ?? (sessionStore.currentSessionKey.isEmpty ? status.mainSessionKey : sessionStore.currentSessionKey)
             let seq = (src["seq"] as? Int64) ?? Int64(src["seq"] as? Int ?? 0)
             let msg = src["message"] as? [String: Any]
             let contentArr = msg?["content"] as? [[String: Any]]
@@ -539,6 +541,9 @@ class GatewayService: ObservableObject {
                 // Initialize session in store and open it
                 sessionStore.ensureSession(key: mainKey, title: "Main")
                 sessionStore.openSession(key: mainKey)
+
+                // Notify agent that this client supports cards
+                sendSystemEvent(sessionKey: mainKey)
             }
 
             // Drain offline outbox
@@ -565,9 +570,13 @@ class GatewayService: ObservableObject {
             activeRunId = event.runId
             logger.info("Agent run started: \(event.runId.prefix(12))")
             log("Agent started (run: \(event.runId.prefix(12))...)")
-            // Insert a streaming placeholder
+            // Insert a streaming placeholder in both stores
             let m = Message(role: .agent, content: "", isStreaming: true)
             messages.append(m)
+            let sessionKey = sessionStore.currentSessionKey.isEmpty
+                ? status.mainSessionKey
+                : sessionStore.currentSessionKey
+            sessionStore.beginAgentResponse(sessionKey: sessionKey)
 
         case .assistant(let text, _):
             // Update the current streaming message with full text
@@ -593,8 +602,35 @@ class GatewayService: ObservableObject {
 
     // MARK: - Send message to agent
 
+    // MARK: - System event (notify agent of client capabilities)
+
+    private func sendSystemEvent(sessionKey: String) {
+        let frame: [String: Any] = [
+            "type": "req",
+            "id": UUID().uuidString,
+            "method": "system-event",
+            "params": [
+                "text": "CLiOS client connected. This session supports cards.v1 rich cards. Use card:type codeblocks for structured data.",
+                "sessionKey": sessionKey
+            ] as [String: Any]
+        ]
+        sendJSON(frame) { [weak self] success in
+            Task { @MainActor in
+                if success {
+                    self?.log("Sent system-event (cards.v1 capability)")
+                } else {
+                    self?.log("Failed to send system-event")
+                }
+            }
+        }
+    }
+
+    // MARK: - Send message to agent
+
     func sendMessage(_ text: String) {
-        let sessionKey = status.mainSessionKey
+        let sessionKey = sessionStore.currentSessionKey.isEmpty
+            ? status.mainSessionKey
+            : sessionStore.currentSessionKey
         logger.info("Sending message to agent (\(text.count) chars) session=\(sessionKey, privacy: .public)")
         log("OUT chat.send (\(text.count) chars)")
 

@@ -24,6 +24,7 @@ enum InlineSpan: Identifiable {
     case bold(id: UUID = UUID(), String)
     case italic(id: UUID = UUID(), String)
     case inlineCode(id: UUID = UUID(), String)
+    case heading(id: UUID = UUID(), level: Int, String)
 
     var id: UUID {
         switch self {
@@ -31,6 +32,7 @@ enum InlineSpan: Identifiable {
         case .bold(let id, _): id
         case .italic(let id, _): id
         case .inlineCode(let id, _): id
+        case .heading(let id, _, _): id
         }
     }
 
@@ -40,6 +42,7 @@ enum InlineSpan: Identifiable {
         case .bold(_, let s): s
         case .italic(_, let s): s
         case .inlineCode(_, let s): s
+        case .heading(_, _, let s): s
         }
     }
 }
