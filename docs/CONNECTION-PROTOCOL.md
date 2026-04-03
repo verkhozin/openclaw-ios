@@ -184,14 +184,16 @@ openclaw devices approve <requestId>
 Мне нужно подключить мобильное приложение CLiOS к этому Gateway.
 
 Сделай следующее:
-1. Открой порт Gateway для внешних подключений: установи gateway.bind в конфиге на "lan" или "0.0.0.0", перезапусти gateway
-2. Проверь что порт 18789 доступен извне: curl -s -o /dev/null -w "%{http_code}" http://<server-ip>:18789/
-3. Подожди 10 секунд -- я подключусь с телефона
-4. После этого выполни: подключись к Gateway по WebSocket, вызови device.pair.list, найди pending запрос с platform "ios" и clientId "openclaw-ios", вызови device.pair.approve с его requestId
-5. Отправь мне deep link: clios://connect?host=<server-ip>&port=18789&token=<gateway-token>
+1. Установи CLiOS skill для поддержки карточек:
+   git clone https://github.com/verkh-agents/clios.git /tmp/clios && cp -r /tmp/clios/skills/clios ~/.openclaw/workspace/skills/ && rm -rf /tmp/clios
+2. Открой порт Gateway для внешних подключений: установи gateway.bind в конфиге на "lan", перезапусти gateway
+3. Проверь что порт 18789 доступен извне: curl -s -o /dev/null -w "%{http_code}" http://<server-ip>:18789/
+4. Отправь мне deep link: clios://connect?host=<server-ip>&port=18789&token=<gateway-token>
+5. Подожди 30 секунд -- я подключусь с телефона
+6. После этого выполни: вызови device.pair.list, найди pending запрос с platform "ios" и clientId "openclaw-ios", вызови device.pair.approve с его requestId
 ```
 
-Агент делает всю работу. Юзер нажимает deep link, устройство одобрено, подключено.
+Агент делает всю работу: ставит скилл, открывает порт, шлет deep link, одобряет устройство. Юзер нажимает ссылку -- всё.
 
 ## Deep Link (primary connection method)
 
