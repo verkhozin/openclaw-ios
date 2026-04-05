@@ -49,6 +49,8 @@ What to build first. Ship in 2-3 weeks.
 
 ## Backlog (add when needed)
 
+- [ ] Git repository browser: выбор репо, переключение веток, просмотр файлов по ветке
+
 - [ ] Link handling: clickable URLs in messages, link shortening/preview
 - [ ] Cards deferred: github.issue, github.ci, github.commit, github.review, github.release, email.inbox, email.digest, email.sent, calendar.*, linear.*, task.result, task.queue, file.diff, file.saved, monitoring.*, infographics
 
