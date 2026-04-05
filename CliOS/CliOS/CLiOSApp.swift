@@ -7,7 +7,7 @@ struct CLiOSApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if gateway.isPaired {
+                if gateway.isPaired && !gateway.isVerifyingConnection {
                     MainTabView()
                         .environmentObject(gateway)
                 } else {

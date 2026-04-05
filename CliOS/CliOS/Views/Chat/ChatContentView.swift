@@ -6,6 +6,8 @@ struct ChatContentView: View {
     @State private var initialMessageIDs: Set<UUID> = []
     @State private var appearedMessages: Set<UUID> = []
     @State private var isNearBottom = true
+    @State private var greeting = ChatGreeting.random()
+    @State private var keyboardUp = false
 
     private var messages: [Message] {
         gateway.sessionStore.currentMessages
@@ -14,6 +16,12 @@ struct ChatContentView: View {
     var body: some View {
         ZStack {
             Color(.secondarySystemBackground)
+
+            if messages.isEmpty {
+                EmptyChatView(greeting: greeting, keyboardUp: keyboardUp)
+                    .transition(.blurReplace)
+                    .animation(.easeOut(duration: 0.3), value: messages.isEmpty)
+            }
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -77,11 +85,151 @@ struct ChatContentView: View {
             }
         }
         .onAppear {
-            // Snapshot existing message IDs — these won't animate in
             initialMessageIDs = Set(messages.map(\.id))
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            keyboardUp = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardUp = false
         }
     }
 }
+
+// MARK: - Empty Chat Placeholder
+
+private struct ChatGreeting {
+    let title: String
+    let subtitle: String
+
+    static func random() -> ChatGreeting {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let name = "Egor"
+
+        let timeGreeting: String
+        switch hour {
+        case 5..<12:  timeGreeting = "Good morning, \(name)"
+        case 12..<17: timeGreeting = "Good afternoon, \(name)"
+        case 17..<22: timeGreeting = "Good evening, \(name)"
+        default:      timeGreeting = "Hey, \(name)"
+        }
+
+        let subtitles = [
+            // Neutral
+            "What do you want to build?",
+            "Ready when you are.",
+            "What's on your mind?",
+            "Let's get to work.",
+            "What's the plan?",
+            "Ask me anything.",
+            "Where were we?",
+            "What's next?",
+            "I'm here.",
+            "Say the word.",
+            "Your move.",
+            "Fire away.",
+            "Let's ship something.",
+            "What needs fixing?",
+            "Waiting for orders.",
+            "Think out loud.",
+            "One message away.",
+            "No small talk needed.",
+            "Skip the hello.",
+            "Just start typing.",
+            "Tell me everything.",
+            "I've been thinking...",
+            "Missed you.",
+            "What broke this time?",
+            "Another day, another bug.",
+            "Let's make something cool.",
+            "Zero meetings. Just us.",
+            "No agenda. Go.",
+            "Context loaded. Ready.",
+            "Your AI is warmed up.",
+            "Still faster than Jira.",
+            "Better than a rubber duck.",
+            "I don't judge typos.",
+            "Tabs or spaces?",
+            "Deploying vibes.",
+            "git push dreams",
+            "sudo make it happen",
+            "while(true) { ship(); }",
+            "404: boredom not found",
+            "npm install motivation",
+            "Ctrl+Z your worries",
+            // Claw-themed
+            "Your claw is ready.",
+            "Pinch to start.",
+            "Claws sharpened.",
+            "The lobster never sleeps.",
+            "Gateway connected. Go.",
+            "Your agent awaits.",
+            "Claw in, problems out.",
+            "Fresh shell, fresh start.",
+            "Antenna up. Listening.",
+            "One claw, zero limits.",
+            "Clawing through your inbox...",
+            "Snip snip. Let's work.",
+            "Exoskeleton loaded.",
+            "Bottom of the ocean? No. Top of your game.",
+            "The claw sees all.",
+            "Molt complete. New features.",
+            "Claw > Click.",
+            "Shell yeah, let's go.",
+            "Lobster mode: activated.",
+            "From the deep, at your service.",
+            "Pincer precision ready.",
+            "Your personal crustacean.",
+            "8 legs busy. 2 claws free.",
+            "Lurking in your terminal.",
+            "Crawling your codebase...",
+            "Snap. What do you need?",
+        ]
+
+        return ChatGreeting(
+            title: timeGreeting,
+            subtitle: subtitles.randomElement()!
+        )
+    }
+}
+
+private struct EmptyChatView: View {
+    let greeting: ChatGreeting
+    var keyboardUp: Bool = false
+
+    private var formattedDate: String {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMMM d"
+        return f.string(from: Date())
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(formattedDate.uppercased())
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.quaternary)
+                .kerning(1.2)
+                .padding(.bottom, 12)
+
+            Text(greeting.title)
+                .font(.system(size: 34, weight: .bold))
+                .foregroundStyle(.primary)
+                .padding(.bottom, 14)
+
+            Text(greeting.subtitle)
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(.tertiary)
+        }
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.keyboard)
+        .offset(y: keyboardUp ? -80 : -30)
+        .animation(.easeInOut(duration: 0.4), value: keyboardUp)
+    }
+}
+
+// MARK: - Chat Bubble
 
 struct ChatBubble: View {
     let text: String
@@ -643,4 +791,5 @@ extension View {
 
 #Preview {
     ChatContentView()
+        .environmentObject(GatewayService.shared)
 }

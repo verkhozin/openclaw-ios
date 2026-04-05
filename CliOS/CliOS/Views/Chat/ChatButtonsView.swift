@@ -8,7 +8,6 @@ struct ChatButtonsView: View {
     @State private var messageText = ""
     @State private var iconRotation: Double = 0
     @FocusState private var inputFocused: Bool
-    @Namespace private var buttonNS
 
     private let btnHeight: CGFloat = 48
     private let transition = Animation.easeInOut(duration: 0.5)
@@ -18,25 +17,32 @@ struct ChatButtonsView: View {
             // MARK: - Left button (Back <-> Paperclip)
 
             if !showCommands {
-                Button(action: { dismiss() }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: isComposing ? "paperclip" : "chevron.left")
-                            .contentTransition(.symbolEffect(.replace.downUp.byLayer))
-                            .font(.system(size: isComposing ? 18 : 16, weight: .semibold))
-                        if !isComposing {
+                if isComposing {
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "paperclip")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .symbolEffect(.appear, isActive: isComposing)
+                    }
+                    .buttonStyle(BounceButtonStyle())
+                    .frame(width: btnHeight, height: btnHeight)
+                    .background(Color.white.opacity(0.12), in: Circle())
+                    .transition(.blurReplace)
+                } else {
+                    Button(action: { dismiss() }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 16, weight: .semibold))
                             Text("Back")
                                 .font(.system(size: 16, weight: .medium))
-                                .transition(.blurReplace)
                         }
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, minHeight: btnHeight)
                     }
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: isComposing ? nil : .infinity, minHeight: btnHeight)
+                    .buttonStyle(BounceButtonStyle())
+                    .background(Color.white.opacity(0.12), in: Capsule())
+                    .transition(.blurReplace)
                 }
-                .buttonStyle(BounceButtonStyle())
-                .frame(width: isComposing ? btnHeight : nil, height: btnHeight)
-                .background(Color.white.opacity(0.12), in: isComposing ? AnyShape(Circle()) : AnyShape(Capsule()))
-                .matchedGeometryEffect(id: "leftBtn", in: buttonNS)
-                .transition(.blurReplace)
             }
 
             // MARK: - Middle (Slash + Search + Gap <-> TextField)
@@ -51,23 +57,20 @@ struct ChatButtonsView: View {
                     .padding(.vertical, 10)
                     .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 22))
                     .focused($inputFocused)
-                    .matchedGeometryEffect(id: "centerArea", in: buttonNS)
                     .transition(.blurReplace)
             } else {
                 HStack(spacing: 8) {
                     // Slash / Commands button
                     Button(action: {
                         let anim: Animation = showCommands
-                            ? .spring(response: 0.35, dampingFraction: 0.92)
-                            : .spring(response: 0.7, dampingFraction: 0.92)
+                            ? .spring(response: 0.6, dampingFraction: 0.9)
+                            : .spring(response: 0.7, dampingFraction: 0.9)
                         if showCommands {
-                            // Closing — rotate reverse
                             withAnimation(anim) {
                                 iconRotation -= 360
                                 showCommands = false
                             }
                         } else {
-                            // Opening — bounce
                             withAnimation(anim) {
                                 showCommands = true
                             }
@@ -98,51 +101,58 @@ struct ChatButtonsView: View {
                             .transition(.blurReplace)
                     }
                 }
-                .matchedGeometryEffect(id: "centerArea", in: buttonNS)
                 .transition(.blurReplace)
             }
 
             // MARK: - Right button (Reply <-> Send)
 
             if !showCommands {
-                Button(action: {
-                    if isComposing {
-                        let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !text.isEmpty {
-                            gateway.sendMessage(text)
+                if isComposing {
+                    let hasText = !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+                    Button(action: {
+                        if hasText {
+                            gateway.sendMessage(messageText.trimmingCharacters(in: .whitespacesAndNewlines))
                             messageText = ""
                         }
                         withAnimation(transition) {
                             isComposing = false
                             inputFocused = false
                         }
-                    } else {
+                    }) {
+                        Image(systemName: hasText ? "arrow.up" : "xmark")
+                            .contentTransition(.symbolEffect(.replace.downUp.byLayer))
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(hasText ? .black : .white)
+                            .symbolEffect(.appear, isActive: isComposing)
+                    }
+                    .buttonStyle(BounceButtonStyle())
+                    .frame(width: btnHeight, height: btnHeight)
+                    .background(hasText ? Color.white : Color.white.opacity(0.12), in: Circle())
+                    .animation(transition, value: hasText)
+                    .transition(.blurReplace)
+                } else {
+                    Button(action: {
                         withAnimation(transition) {
                             isComposing = true
                         }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                             inputFocused = true
                         }
-                    }
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: isComposing ? "arrow.up" : "arrowshape.turn.up.left.fill")
-                            .contentTransition(.symbolEffect(.replace.downUp.byLayer))
-                            .font(.system(size: isComposing ? 18 : 16, weight: isComposing ? .bold : .semibold))
-                        if !isComposing {
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrowshape.turn.up.left.fill")
+                                .font(.system(size: 16, weight: .semibold))
                             Text("Reply")
                                 .font(.system(size: 16, weight: .medium))
-                                .transition(.blurReplace)
                         }
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity, minHeight: btnHeight)
                     }
-                    .foregroundStyle(.black)
-                    .frame(maxWidth: isComposing ? nil : .infinity, minHeight: btnHeight)
+                    .buttonStyle(BounceButtonStyle())
+                    .background(Color.white, in: Capsule())
+                    .transition(.blurReplace)
                 }
-                .buttonStyle(BounceButtonStyle())
-                .frame(width: isComposing ? btnHeight : nil, height: btnHeight)
-                .background(Color.white, in: isComposing ? AnyShape(Circle()) : AnyShape(Capsule()))
-                .matchedGeometryEffect(id: "rightBtn", in: buttonNS)
-                .transition(.blurReplace)
             }
         }
         .padding(.horizontal, Theme.paddingM)
@@ -165,7 +175,7 @@ struct ChatButtonsView: View {
 
 // MARK: - Bounce tap style
 
-private struct BounceButtonStyle: ButtonStyle {
+struct BounceButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.9 : 1)
@@ -203,6 +213,76 @@ private struct RevealText: View {
         }
         .onDisappear {
             visibleCount = 0
+        }
+    }
+}
+
+// MARK: - Chat Input Overlay (composing mode, lives in chat area)
+
+struct ChatInputOverlay: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var gateway: GatewayService
+    @Binding var isComposing: Bool
+    @Binding var showCommands: Bool
+    @State private var messageText = ""
+    @FocusState private var inputFocused: Bool
+
+    private let btnHeight: CGFloat = 48
+    private let transition = Animation.easeInOut(duration: 0.5)
+
+    var body: some View {
+        let hasText = !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        HStack(alignment: .bottom, spacing: 8) {
+            // Paperclip
+            Button(action: {}) {
+                Image(systemName: "paperclip")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color(.label))
+                    .symbolEffect(.bounce, value: isComposing)
+            }
+            .buttonStyle(BounceButtonStyle())
+            .frame(width: btnHeight, height: btnHeight)
+            .background(Color(.tertiarySystemFill), in: Circle())
+
+            // TextField
+            TextField("Message", text: $messageText, axis: .vertical)
+                .font(.system(size: 16))
+                .foregroundStyle(.primary)
+                .tint(.primary)
+                .lineLimit(1...6)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .frame(minHeight: btnHeight)
+                .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 22))
+                .focused($inputFocused)
+
+            // Send / Close
+            Button(action: {
+                if hasText {
+                    gateway.sendMessage(messageText.trimmingCharacters(in: .whitespacesAndNewlines))
+                    messageText = ""
+                }
+                withAnimation(transition) {
+                    isComposing = false
+                    inputFocused = false
+                }
+            }) {
+                Image(systemName: hasText ? "arrow.up" : "xmark")
+                    .contentTransition(.symbolEffect(.replace.downUp.byLayer))
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(hasText ? Color(.systemBackground) : Color(.secondaryLabel))
+                    .symbolEffect(.bounce, value: isComposing)
+            }
+            .buttonStyle(BounceButtonStyle())
+            .frame(width: btnHeight, height: btnHeight)
+            .background(hasText ? Color(.label) : Color(.tertiarySystemFill), in: Circle())
+            .animation(transition, value: hasText)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                inputFocused = true
+            }
         }
     }
 }

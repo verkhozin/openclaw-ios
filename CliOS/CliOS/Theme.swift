@@ -6,8 +6,8 @@ enum Theme {
     static let surface = Color("surface")
     static let surfaceElevated = Color("surfaceElevated")
     static let border = Color("border")
-    static let accent = Color(hex: "FF4D00")
-    static let accentDim = Color(hex: "FF4D00").opacity(0.2)
+    static let accent = Color.white
+    static let accentDim = Color.white.opacity(0.2)
     static let textPrimary = Color("textPrimary")
     static let textSecondary = Color("textSecondary")
     static let textMuted = Color("textMuted")

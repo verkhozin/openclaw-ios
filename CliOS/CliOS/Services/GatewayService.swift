@@ -24,6 +24,8 @@ class GatewayService: ObservableObject {
 
     // MARK: - Published state
     @Published var isPaired: Bool = false
+    @Published var isVerifyingConnection: Bool = false
+    @Published var connectionError: String?
     @Published var status: GatewayStatus = GatewayStatus()
     @Published var messages: [Message] = []
     @Published var tasks: [AgentTask] = []
@@ -64,8 +66,8 @@ class GatewayService: ObservableObject {
         log("Pairing with \(url.absoluteString)")
         gatewayURL = url
         authToken = token
-        savePairing()
-        isPaired = true
+        connectionError = nil
+        isVerifyingConnection = true
         reconnectAttempt = 0
         connect()
     }
@@ -212,6 +214,16 @@ class GatewayService: ObservableObject {
     // MARK: - Reconnect
 
     private func scheduleReconnect() {
+        // During initial verification, fail immediately — don't auto-retry
+        if isVerifyingConnection {
+            logger.error("Connection failed during verification — aborting pairing")
+            log("Connection failed — could not verify gateway")
+            isVerifyingConnection = false
+            connectionError = "Could not connect to gateway. Check the address and token."
+            disconnect()
+            return
+        }
+
         reconnectAttempt += 1
         guard reconnectAttempt <= maxReconnectAttempts else {
             logger.error("Max reconnect attempts (\(self.maxReconnectAttempts)) reached — giving up")
@@ -411,6 +423,17 @@ class GatewayService: ObservableObject {
             status.isConnected = true
             reconnectAttempt = 0
             startPingTimer()
+
+            // Finalize pairing on first successful connection
+            if isVerifyingConnection {
+                savePairing()
+                isPaired = true
+                isVerifyingConnection = false
+                connectionError = nil
+                logger.info("Connection verified via event — pairing confirmed")
+                log("Connection verified — pairing saved")
+            }
+
             let src = json["payload"] as? [String: Any] ?? json
             if let ver = src["version"] as? String {
                 status.version = ver
@@ -540,6 +563,13 @@ class GatewayService: ObservableObject {
             let msg = error["message"] as? String ?? "Unknown error"
             let code = error["code"] as? Int
             log("Response error: \(msg)\(code.map { " [code \($0)]" } ?? "")")
+
+            // If verifying, surface the error and abort
+            if isVerifyingConnection {
+                isVerifyingConnection = false
+                connectionError = msg
+                disconnect()
+            }
             return
         }
 
@@ -557,6 +587,16 @@ class GatewayService: ObservableObject {
             status.isConnected = true
             status.version = version
             status.connId = connId
+
+            // Finalize pairing on first successful connection
+            if isVerifyingConnection {
+                savePairing()
+                isPaired = true
+                isVerifyingConnection = false
+                connectionError = nil
+                logger.info("Connection verified — pairing confirmed")
+                log("Connection verified — pairing saved")
+            }
 
             // Extract mainSessionKey from snapshot
             let snapshot = payload["snapshot"] as? [String: Any] ?? [:]

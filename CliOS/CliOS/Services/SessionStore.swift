@@ -335,20 +335,20 @@ final class SessionStore: ObservableObject {
         switch card.type {
         case .githubPR:
             let title = card.fields["title"] ?? ""
-            return title.isEmpty ? "📋 Pull Request" : "📋 PR: \(title)"
+            return title.isEmpty ? "Pull Request" : "PR: \(title)"
         case .emailInbox, .emailDraft, .emailDigest:
             let subject = card.fields["subject"] ?? ""
-            return subject.isEmpty ? "✉️ Email" : "✉️ \(subject)"
+            return subject.isEmpty ? "Email" : subject
         case .calendarEvent:
             let title = card.fields["title"] ?? ""
-            return title.isEmpty ? "📅 Calendar event" : "📅 \(title)"
+            return title.isEmpty ? "Calendar event" : title
         case .calendarConflict:
-            return "⚠️ Calendar conflict"
+            return "Calendar conflict"
         case .todo:
             let title = card.fields["title"] ?? ""
-            return title.isEmpty ? "☑️ Todo" : "☑️ \(title)"
+            return title.isEmpty ? "Todo" : title
         default:
-            return "📎 \(card.type.rawValue)"
+            return card.type.rawValue
         }
     }
 
