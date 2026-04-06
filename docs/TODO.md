@@ -32,6 +32,14 @@ What to build first. Ship in 2-3 weeks.
   - [ ] client_metadata (pinned, bookmarked, user tags) — отдельная таблица, не удаляется при очистке кэша
   - [ ] session_metadata (lastReadSeq, pinned, muted, customTitle, folder)
   - [ ] iCloud sync client_metadata через CloudKit (на будущее)
+- [ ] Smart mentions in chat input (`@` autocomplete)
+  - [ ] Trigger: user types `@` → popup с категориями (Files, Tasks, Sessions, Agents)
+  - [ ] Поиск: fuzzy-match по имени, фильтр по категории
+  - [ ] Источники: файлы из workspace (FileService), таски (TaskService), сессии (SessionStore), агенты (Gateway)
+  - [ ] UI: popup-лист над клавиатурой, иконка + название + путь/статус
+  - [ ] Вставка: `@filename.swift` / `@task-123` / `@session:design-review` — как inline-токен (chip)
+  - [ ] Рендер в сообщении: кликабельный chip → навигация к сущности
+  - [ ] Передача в gateway: упоминания как structured metadata в chat.send params
 - [ ] Code blocks with syntax highlighting + copy
 - [ ] Voice input (hold to record, speech-to-text, send as text)
 - [ ] Task queue (list active/recent subagents with status)
@@ -50,7 +58,17 @@ What to build first. Ship in 2-3 weeks.
 ## Backlog (add when needed)
 
 - [ ] Git repository browser: выбор репо, переключение веток, просмотр файлов по ветке
-
+- [ ] BranchEntityProvider: индексация веток через Gateway git API (когда появится эндпоинт)
+- [ ] Gateway endpoint `/__openclaw__/entities/index?since={ts}` — серверная индексация + дельта-синк
+  - [ ] Сервер индексирует файлы, таски, агентов, крон-джобы, ветки
+  - [ ] Клиент переключается с per-source polling на один эндпоинт
+  - [ ] Дельта-синк: отдавать только изменённые сущности с последнего запроса
+- [ ] Smart mentions UI в ChatInputBar
+  - [ ] `@` триггер → popup автокомплита над клавиатурой
+  - [ ] Фильтрация по категориям (иконка + табы: All / Files / Tasks / Sessions / Agents)
+  - [ ] Inline chip-токены в текстовом поле (NSAttributedString или custom TextEditor)
+  - [ ] Рендер chips в MessageBubble (кликабельные → навигация к сущности)
+  - [ ] Передача mentions как structured metadata в chat.send params
 - [ ] Link handling: clickable URLs in messages, link shortening/preview
 - [ ] Cards deferred: github.issue, github.ci, github.commit, github.review, github.release, email.inbox, email.digest, email.sent, calendar.*, linear.*, task.result, task.queue, file.diff, file.saved, monitoring.*, infographics
 

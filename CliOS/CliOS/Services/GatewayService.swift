@@ -125,6 +125,7 @@ class GatewayService: ObservableObject {
 
     func disconnect() {
         stopPingTimer()
+        EntityIndex.shared.stopPeriodicReindex()
         if webSocket != nil {
             logger.info("Disconnecting WebSocket")
             log("Closing WebSocket connection")
@@ -516,6 +517,8 @@ class GatewayService: ObservableObject {
         case "task", "event:task":
             let src = json["payload"] as? [String: Any] ?? json
             log("Task event: \(src["status"] as? String ?? "?")")
+            // Reindex tasks on task events
+            Task { await EntityIndex.shared.reindex(type: .task) }
 
         case "error":
             let src = json["payload"] as? [String: Any] ?? json
@@ -619,6 +622,9 @@ class GatewayService: ObservableObject {
             }
             reconnectAttempt = 0
             startPingTimer()
+
+            // Start entity indexing on successful connection
+            setupEntityIndex()
         } else if ok {
             log("Response OK (payload type: \(payloadType ?? "?"))")
         } else {
@@ -831,6 +837,31 @@ class GatewayService: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: - Entity Index
+
+    private var entityIndexConfigured = false
+
+    /// Register entity providers and kick off initial index.
+    private func setupEntityIndex() {
+        guard !entityIndexConfigured else {
+            // Already configured — just trigger a reindex
+            Task { await EntityIndex.shared.reindexAll() }
+            return
+        }
+        entityIndexConfigured = true
+
+        let index = EntityIndex.shared
+        index.register(provider: FileEntityProvider(), for: .file)
+        index.register(provider: TaskEntityProvider(), for: .task)
+        index.register(provider: SessionEntityProvider(), for: .session)
+        index.register(provider: AgentEntityProvider(), for: .agent)
+        index.register(provider: CronEntityProvider(), for: .cron)
+        index.startPeriodicReindex()
+
+        Task { await index.reindexAll() }
+        logger.info("Entity index configured and initial reindex started")
     }
 
     // MARK: - Helpers
