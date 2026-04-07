@@ -54,6 +54,7 @@ class GatewayService: ObservableObject {
         if isPaired {
             logger.info("Restored pairing from Keychain — url=\(self.gatewayURL?.absoluteString ?? "nil", privacy: .public)")
             log("Restored pairing from Keychain")
+            connect()
         } else {
             logger.info("No saved pairing found")
         }
@@ -682,20 +683,75 @@ class GatewayService: ObservableObject {
 
     // MARK: - System event (notify agent of client capabilities)
 
+    // MARK: - Card capability instruction for agent
+
+    private static let cardCapabilityPrompt = """
+    [SYSTEM] CLiOS mobile client connected. This session supports rich cards (cards.v1).
+
+    IMPORTANT: When outputting structured data, you MUST use card codeblocks instead of plain text.
+
+    ## Format
+    Standard markdown codeblock with `card:type` as language, key: value pairs inside:
+
+    ```card:github.pr
+    title: Fix hero animation
+    status: merged
+    repo: verkh-tech/site
+    ci: passed
+    additions: 42
+    deletions: 8
+    ```
+
+    For actions (user approval needed), add `---` separator:
+    ```card:email.draft
+    to: alex@example.com
+    subject: Proposal
+    content: Hi Alex...
+    ---
+    actions: approve, edit, discard
+    ```
+
+    ## Available card types
+    - github.pr — PRs (fields: number, title, status, author, repo, branch, targetBranch, ci, additions, deletions)
+    - github.issue — issues (fields: title, labels, assignee, status)
+    - github.ci — CI/CD (fields: status, duration, logs)
+    - email.inbox — incoming email (fields: from, subject, content, time, isUnread)
+    - email.draft — composed email (fields: to, subject, content; actions: approve, edit, discard)
+    - email.digest — multiple emails summary (fields: count, urgent, from, subject)
+    - calendar.event — meetings (fields: title, date, startTime, endTime, duration, location, attendees)
+    - calendar.conflict — overlapping events (fields: event1, event2, suggestion)
+    - linear.issue — task tracker (fields: source, id, title, status, priority, assignee, labels, project)
+    - file.preview — saved files (fields: path, type, size, url)
+    - file.diff — code changes (fields: path, additions, deletions, summary)
+    - lead — CRM/sales (fields: name, round, site, status, contact)
+    - task.status — subagent status (fields: id, label, status, model, runtime, tokens)
+    - task.approval — permission request (fields: id, command, risk, context; actions: approve, deny)
+    - todo — checklist (fields: title, items as "text|done" comma-separated, updated)
+    - digest.morning — morning briefing (fields: date, greeting, calendar, email, tasks, summary)
+    - story — notable event (fields: title, body, action, action_target)
+    - session.title — name this chat session, 3-5 words (fields: title). Send as FIRST reply in new sessions.
+
+    ## Rules
+    1. One type per situation — type follows from context.
+    2. Digest over spam — multiple similar items → one digest card, NOT separate cards.
+    3. If no type fits, use plain text.
+    4. Always use cards when structured data is available — the mobile app renders them as native UI components.
+    """
+
     private func sendSystemEvent(sessionKey: String) {
         let frame: [String: Any] = [
             "type": "req",
             "id": UUID().uuidString,
             "method": "system-event",
             "params": [
-                "text": "CLiOS client connected. This session supports cards.v1 rich cards. Use card:type codeblocks for structured data.",
+                "text": Self.cardCapabilityPrompt,
                 "sessionKey": sessionKey
             ] as [String: Any]
         ]
         sendJSON(frame) { [weak self] success in
             Task { @MainActor in
                 if success {
-                    self?.log("Sent system-event (cards.v1 capability)")
+                    self?.log("Sent system-event (cards.v1 capability prompt)")
                 } else {
                     self?.log("Failed to send system-event")
                 }

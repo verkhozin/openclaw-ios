@@ -13,10 +13,14 @@ constant float2 vp = float2(320.0, 200.0);
 // Buffer A inlined — generates palette color for parameter i (0..1)
 static float3 palette(float i, float iTime, float3 tint) {
     float3 t = iTime / float3(63.0, 78.0, 45.0);
-    // tintColor controls the phase offsets (default ~0,1,-0.5 gives original rainbow)
+    // tintColor: x = center brightness, y = contrast range, z = unused
+    // defaults: center 0.5, range 0.5 → full 0-1
+    // for dark subtle: center 0.2, range 0.08 → 0.12-0.28
+    float center = tint.x > 0.001 ? tint.x : 0.5;
+    float range  = tint.y > 0.001 ? tint.y : 0.5;
     float3 phase = tint * pi;
     float3 cs = cos(i * pi * 2.0 + phase + t);
-    return 0.5 + 0.5 * cs;
+    return center + range * cs;
 }
 
 fragment float4 plasmaFragment(VertexOut in [[stage_in]],

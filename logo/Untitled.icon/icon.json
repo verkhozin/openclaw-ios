@@ -1,0 +1,54 @@
+{
+  "fill" : "system-light",
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:1.00000,0.33561,0.00000,1.00000",
+                  "display-p3:1.00000,0.00000,0.14119,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:1.00000,0.44723,0.00000,1.00000",
+                  "display-p3:0.96783,0.08635,0.25444,1.00000"
+                ]
+              }
+            }
+          ],
+          "glass" : true,
+          "image-name" : "CLiOSsomelogo.svg",
+          "name" : "CLiOSsomelogo",
+          "position" : {
+            "scale" : 2.3,
+            "translation-in-points" : [
+              -18,
+              21
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

@@ -12,6 +12,7 @@ struct MetalShaderView: UIViewRepresentable {
     var fps: Int = 30
     var shader: ShaderType = .sky
     var tintColor: SIMD3<Float> = SIMD3<Float>(1.0, 0.3, 0.0)
+    var timeScale: Float = 1.0
     @Binding var isVisible: Bool
 
     func makeCoordinator() -> Renderer {
@@ -29,6 +30,7 @@ struct MetalShaderView: UIViewRepresentable {
         mtkView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
 
         context.coordinator.tintColor = tintColor
+        context.coordinator.timeScale = timeScale
         context.coordinator.setupMetal(device: mtkView.device!, fragmentName: shader.fragmentFunction)
 
         return mtkView
@@ -38,6 +40,7 @@ struct MetalShaderView: UIViewRepresentable {
         uiView.isPaused = !isVisible
         uiView.preferredFramesPerSecond = fps
         context.coordinator.tintColor = tintColor
+        context.coordinator.timeScale = timeScale
     }
 
     // MARK: - Renderer
@@ -49,6 +52,7 @@ struct MetalShaderView: UIViewRepresentable {
         private var startTime: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
         private var uniformBuffer: MTLBuffer!
         var tintColor: SIMD3<Float> = SIMD3<Float>(1.0, 0.3, 0.0)
+        var timeScale: Float = 1.0
 
         func setupMetal(device: MTLDevice, fragmentName: String) {
             self.device = device
@@ -89,7 +93,7 @@ struct MetalShaderView: UIViewRepresentable {
                   let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor)
             else { return }
 
-            let elapsed = Float(CFAbsoluteTimeGetCurrent() - startTime)
+            let elapsed = Float(CFAbsoluteTimeGetCurrent() - startTime) * timeScale
             var uniforms = ShaderUniforms(
                 time: elapsed,
                 resolution: SIMD2<Float>(Float(view.drawableSize.width), Float(view.drawableSize.height)),

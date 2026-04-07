@@ -115,3 +115,36 @@ struct TaskQueueContent: View {
         .scrollContentBackground(.hidden)
     }
 }
+
+// MARK: - Task row used by TaskQueueContent
+
+private struct TaskRow: View {
+    let task: AgentTask
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Circle()
+                .fill(task.status == .running ? Theme.accent : (task.status == .done ? .green : .red))
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.label)
+                    .font(Theme.fontBody)
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+
+                Text("\(task.model) · \(task.runtimeFormatted)")
+                    .font(Theme.fontCaption)
+                    .foregroundColor(Theme.textMuted)
+            }
+
+            Spacer()
+
+            Text(task.status.rawValue)
+                .font(Theme.fontCaption)
+                .foregroundColor(Theme.textSecondary)
+                .textCase(.uppercase)
+        }
+        .padding(.vertical, 4)
+    }
+}

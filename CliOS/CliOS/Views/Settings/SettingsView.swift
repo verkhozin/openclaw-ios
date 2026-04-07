@@ -90,6 +90,22 @@ struct SettingsView: View {
                         Label("Task Tracker", systemImage: "checklist")
                             .foregroundColor(Theme.accent)
                     }
+
+                    NavigationLink {
+                        SiriGlowGalleryView()
+                    } label: {
+                        Label("Siri Glow", systemImage: "rainbow")
+                            .foregroundColor(Theme.accent)
+                    }
+
+                    NavigationLink {
+                        PairingMockView()
+                            .navigationBarHidden(true)
+                            .toolbar(.hidden, for: .tabBar)
+                    } label: {
+                        Label("Pairing Flow", systemImage: "antenna.radiowaves.left.and.right")
+                            .foregroundColor(Theme.accent)
+                    }
                 }
 
                 Section {

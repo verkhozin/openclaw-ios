@@ -3,11 +3,12 @@ import SwiftUI
 @main
 struct CLiOSApp: App {
     @StateObject private var gateway = GatewayService.shared
+    @State private var showMainAfterConnect = false
 
     var body: some Scene {
         WindowGroup {
             Group {
-                if gateway.isPaired && !gateway.isVerifyingConnection {
+                if showMainAfterConnect {
                     MainTabView()
                         .environmentObject(gateway)
                 } else {
@@ -17,6 +18,25 @@ struct CLiOSApp: App {
             }
             .onOpenURL { url in
                 CLiOSApp.handleIncomingURL(url)
+            }
+            .onChange(of: gateway.isPaired) { _, paired in
+                if paired && !gateway.isVerifyingConnection {
+                    if showMainAfterConnect { return }
+                    // Delay so user sees the "Connected" animation fully
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                        withAnimation(.easeInOut(duration: 0.8)) {
+                            showMainAfterConnect = true
+                        }
+                    }
+                } else if !paired {
+                    showMainAfterConnect = false
+                }
+            }
+            .onAppear {
+                // Already paired from keychain — go straight in
+                if gateway.isPaired {
+                    showMainAfterConnect = true
+                }
             }
         }
         .handlesExternalEvents(matching: ["*"])
