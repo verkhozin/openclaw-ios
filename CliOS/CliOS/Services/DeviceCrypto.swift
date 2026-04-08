@@ -33,7 +33,7 @@ enum DeviceCrypto {
         let devId = deviceId
 
         // v3|{deviceId}|openclaw-ios|ui|operator|scopes|{signedAtMs}|{token}|{nonce}|ios|
-        let scopes = "operator.read,operator.write,operator.approvals,operator.pairing"
+        let scopes = "operator.read,operator.write,operator.approvals,operator.pairing,operator.admin"
         let payload = "v3|\(devId)|openclaw-ios|ui|operator|\(scopes)|\(signedAtMs)|\(token)|\(nonce)|ios|"
 
         logger.debug("Signing payload (\(payload.count) chars)")

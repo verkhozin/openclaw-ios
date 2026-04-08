@@ -71,6 +71,19 @@ What to build first. Ship in 2-3 weeks.
   - [ ] Передача mentions как structured metadata в chat.send params
 - [ ] Link handling: clickable URLs in messages, link shortening/preview
 - [ ] Cards deferred: github.issue, github.ci, github.commit, github.review, github.release, email.inbox, email.digest, email.sent, calendar.*, linear.*, task.result, task.queue, file.diff, file.saved, monitoring.*, infographics
+- [ ] Personal / lifestyle карточки (агент + карточка, без отдельного UI):
+  - [ ] `card:expense` — трекер расходов: сумма, категория, дата, заметка. "Потратил 500 на обед" → карточка
+  - [ ] `card:expense.summary` — infographic: расходы за неделю/месяц, breakdown по категориям (ring/bar)
+  - [ ] `card:habit` — трекер привычек: название, streak, сегодня выполнено/нет. Агент спрашивает вечером
+  - [ ] `card:habit.board` — все привычки с streak-визуализацией (grid/heatmap)
+  - [ ] `card:mood` — дневник настроения: emoji, заметка, timestamp. Агент спрашивает 1-2 раза в день
+  - [ ] `card:health` — вес/сон/шаги/вода: значение, тренд, цель. Данные от агента или HealthKit
+  - [ ] `card:goal` — цели: название, прогресс %, дедлайн, подзадачи
+  - [ ] `card:reminder` — напоминания: текст, время, повтор. Агент ставит через cron
+  - [ ] `card:note` — быстрая заметка: текст, теги, timestamp. "Запомни: паспорт в верхнем ящике"
+  - [ ] `card:recipe` — рецепт: название, ингредиенты, шаги. "Что приготовить из курицы и риса?"
+  - [ ] `card:travel` — путешествие: рейс, отель, даты, документы. Агент парсит из email/booking
+  - [ ] `card:subscription` — подписки: сервис, сумма, дата списания, статус
 
 ## Phase 3: Integration (week 4+)
 

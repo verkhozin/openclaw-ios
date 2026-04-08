@@ -47,7 +47,7 @@ Gateway шлет первым:
 
 Payload для подписи (v3 формат, pipe-separated):
 ```
-v3|{deviceId}|openclaw-ios|ui|operator|operator.read,operator.write,operator.approvals,operator.pairing|{signedAtMs}|{token}|{nonce}|ios|
+v3|{deviceId}|openclaw-ios|ui|operator|operator.read,operator.write,operator.approvals,operator.pairing,operator.admin|{signedAtMs}|{token}|{nonce}|ios|
 ```
 
 Последнее поле (deviceFamily) -- пустая строка.
@@ -71,7 +71,7 @@ Connect frame:
       "mode": "ui"
     },
     "role": "operator",
-    "scopes": ["operator.read", "operator.write", "operator.approvals", "operator.pairing"],
+    "scopes": ["operator.read", "operator.write", "operator.approvals", "operator.pairing", "operator.admin"],
     "caps": [],
     "commands": [],
     "permissions": {},
@@ -270,7 +270,7 @@ ws.on('message', (data) => {
   if (frame.type === 'event' && frame.event === 'connect.challenge') {
     const nonce = frame.payload.nonce;
     const signedAtMs = Date.now();
-    const scopes = ["operator.read","operator.write","operator.approvals","operator.pairing"];
+    const scopes = ["operator.read","operator.write","operator.approvals","operator.pairing","operator.admin"];
     
     const payload = [
       'v3', deviceId, 'openclaw-ios', 'ui', 'operator',
@@ -330,7 +330,7 @@ func base64url(_ data: Data) -> String {
 
 // Sign challenge
 func signChallenge(nonce: String, token: String, signedAtMs: Int64) -> (signature: String, signedAt: Int64) {
-    let scopes = "operator.read,operator.write,operator.approvals,operator.pairing"
+    let scopes = "operator.read,operator.write,operator.approvals,operator.pairing,operator.admin"
     let payload = "v3|\(deviceId)|openclaw-ios|ui|operator|\(scopes)|\(signedAtMs)|\(token)|\(nonce)|ios|"
     let payloadData = Data(payload.utf8)
     let signature = try! privateKey.signature(for: payloadData)

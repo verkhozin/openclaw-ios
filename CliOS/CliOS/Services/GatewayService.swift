@@ -166,7 +166,7 @@ class GatewayService: ObservableObject {
                     "mode": "ui"
                 ] as [String: Any],
                 "role": "operator",
-                "scopes": ["operator.read", "operator.write", "operator.approvals", "operator.pairing"],
+                "scopes": ["operator.read", "operator.write", "operator.approvals", "operator.pairing", "operator.admin"],
                 "caps": ["cards.v1"],
                 "commands": [] as [String],
                 "permissions": [:] as [String: Any],
