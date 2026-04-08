@@ -456,8 +456,10 @@ class GatewayService: ObservableObject {
             let src = json["payload"] as? [String: Any] ?? json
             let state = src["state"] as? String ?? ""
             // Use sessionKey from payload; fallback to current open session, then mainSessionKey
-            let sessionKey = (src["sessionKey"] as? String)
-                ?? (sessionStore.currentSessionKey.isEmpty ? status.mainSessionKey : sessionStore.currentSessionKey)
+            let rawSessionKey = src["sessionKey"] as? String ?? ""
+            let sessionKey = rawSessionKey.isEmpty
+                ? (sessionStore.currentSessionKey.isEmpty ? status.mainSessionKey : sessionStore.currentSessionKey)
+                : rawSessionKey
             let seq = (src["seq"] as? Int64) ?? Int64(src["seq"] as? Int ?? 0)
             let msg = src["message"] as? [String: Any]
             let contentArr = msg?["content"] as? [[String: Any]]
@@ -465,6 +467,7 @@ class GatewayService: ObservableObject {
             let ts = (msg?["timestamp"] as? Int64) ?? Int64(Date().timeIntervalSince1970 * 1000)
             let runId = src["runId"] as? String
 
+            logger.info("Chat event: state=\(state, privacy: .public) sessionKey=\(sessionKey, privacy: .public) textLen=\(text.count)")
             if !text.isEmpty {
                 // Persist via SessionStore (handles cache, unread, UI update)
                 sessionStore.handleChatEvent(
@@ -639,18 +642,23 @@ class GatewayService: ObservableObject {
     private var activeRunId: String?
 
     private func handleAgentEvent(_ event: AgentEvent) {
+        // Resolve the session this event belongs to.
+        // Priority: event.sessionKey → currentSessionKey → mainSessionKey
+        let eventSessionKey: String = {
+            if !event.sessionKey.isEmpty { return event.sessionKey }
+            if !sessionStore.currentSessionKey.isEmpty { return sessionStore.currentSessionKey }
+            return status.mainSessionKey
+        }()
+
         switch event.stream {
         case .lifecycleStart:
             activeRunId = event.runId
-            logger.info("Agent run started: \(event.runId.prefix(12))")
-            log("Agent started (run: \(event.runId.prefix(12))...)")
-            // Insert a streaming placeholder in both stores
+            logger.info("Agent run started: \(event.runId.prefix(12)) session=\(eventSessionKey, privacy: .public)")
+            log("Agent started (run: \(event.runId.prefix(12))... session: \(eventSessionKey))")
+            // Insert a streaming placeholder in both stores using the correct session
             let m = Message(role: .agent, content: "", isStreaming: true)
             messages.append(m)
-            let sessionKey = sessionStore.currentSessionKey.isEmpty
-                ? status.mainSessionKey
-                : sessionStore.currentSessionKey
-            sessionStore.beginAgentResponse(sessionKey: sessionKey)
+            sessionStore.beginAgentResponse(sessionKey: eventSessionKey)
 
         case .assistant(let text, _):
             // Update the current streaming message with full text
@@ -666,15 +674,19 @@ class GatewayService: ObservableObject {
             }
 
         case .lifecycleEnd:
-            logger.info("Agent run ended: \(event.runId.prefix(12))")
+            logger.info("Agent run ended: \(event.runId.prefix(12)) session=\(eventSessionKey, privacy: .public)")
             log("Agent finished (run: \(event.runId.prefix(12))...)")
-            // Finalize legacy messages
+            // Finalize legacy messages — but don't wipe content, chat final event will persist it
             if let idx = messages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
                 messages[idx].isStreaming = false
                 messages[idx].blocks = MessageParser.parse(messages[idx].content)
             }
-            // Finalize SessionStore streaming message
-            sessionStore.finalizeAgentResponse()
+            // Finalize SessionStore — use a small delay so chat final event can arrive first
+            // and update content before we clear the streaming state
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 300_000_000) // 300ms grace
+                self?.sessionStore.finalizeAgentResponse()
+            }
             activeRunId = nil
         }
     }

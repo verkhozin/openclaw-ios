@@ -174,7 +174,11 @@ final class SessionStore: ObservableObject {
 
     /// Insert an empty streaming placeholder so the UI shows a typing indicator.
     func beginAgentResponse(sessionKey: String) {
-        guard sessionKey == currentSessionKey else { return }
+        // If the session isn't open yet, open it first so messages land in the right place
+        if currentSessionKey != sessionKey {
+            logger.info("beginAgentResponse: auto-opening session \(sessionKey, privacy: .public)")
+            openSession(key: sessionKey)
+        }
         guard streamingMessage == nil else { return }
         let msg = Message(role: .agent, content: "", isStreaming: true)
         streamingMessage = msg
