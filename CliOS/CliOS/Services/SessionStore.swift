@@ -149,7 +149,20 @@ final class SessionStore: ObservableObject {
                     session.unreadCount = currentUnread + 1
                     db.upsertSession(session)
                 }
+
+                // Type 1: cross-session notification
+                let sessionTitle = sessions.first(where: { $0.sessionKey == sessionKey })?.title ?? Self.readableTitle(from: sessionKey)
+                NotificationManager.shared.post(AppNotification(
+                    type: .newMessage,
+                    style: .pill,
+                    title: sessionTitle,
+                    subtitle: preview,
+                    sessionKey: sessionKey
+                ))
             }
+
+            // Type 2: notify cards — fire regardless of active session
+            postNotifyCards(from: text, sessionKey: sessionKey)
 
             logger.info("Persisted message to \(sessionKey, privacy: .public) seq=\(seq)")
 
@@ -298,6 +311,73 @@ final class SessionStore: ObservableObject {
     func cleanupStale() {
         db.cleanupStaleSessions()
         loadSessions()
+    }
+
+    // MARK: - Notifications
+
+    /// Parse notify cards from message text and post as in-app notifications.
+    private func postNotifyCards(from text: String, sessionKey: String) {
+        let result = CardParser.parse(text)
+        for card in result.cards {
+            switch card.type {
+            case .notify:
+                let kind = card.fields["kind"] ?? "system"
+                let title = card.fields["title"] ?? "Notification"
+                let subtitle = card.fields["subtitle"]
+                let style: AppNotificationStyle = {
+                    switch card.fields["style"]?.lowercased() {
+                    case "card":   return .card
+                    case "island": return .island
+                    default:       return .pill
+                    }
+                }()
+                NotificationManager.shared.post(AppNotification(
+                    type: .from(notifyKind: kind),
+                    style: style,
+                    title: title,
+                    subtitle: subtitle,
+                    sessionKey: sessionKey
+                ))
+
+            case .notifyGit:
+                let gitType = card.fields["type"] ?? "commit"
+                let branch = card.fields["branch"] ?? ""
+                let notifType: AppNotificationType = gitType == "deploy" ? .agentUpdate : .agentUpdate
+                NotificationManager.shared.post(AppNotification(
+                    type: notifType,
+                    style: .island,
+                    title: branch,
+                    sessionKey: sessionKey,
+                    visualCard: card
+                ))
+
+            case .notifyWorkflow:
+                let workflow = card.fields["workflow"] ?? "workflow"
+                let agents = card.fields["agents"] ?? ""
+                NotificationManager.shared.post(AppNotification(
+                    type: .agentUpdate,
+                    style: .island,
+                    title: "\(workflow) — \(agents) agents",
+                    sessionKey: sessionKey,
+                    visualCard: card
+                ))
+
+            case .notifySubagent:
+                let status = card.fields["status"] ?? "running"
+                let task = card.fields["task"] ?? ""
+                let type: AppNotificationType = status == "done" ? .taskComplete : .agentUpdate
+                NotificationManager.shared.post(AppNotification(
+                    type: type,
+                    style: .island,
+                    title: task,
+                    sessionKey: sessionKey,
+                    visualCard: card
+                ))
+
+            default:
+                break
+            }
+        }
     }
 
     // MARK: - Helpers

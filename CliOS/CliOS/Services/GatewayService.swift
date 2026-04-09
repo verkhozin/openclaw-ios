@@ -26,11 +26,15 @@ class GatewayService: ObservableObject {
     @Published var isPaired: Bool = false
     @Published var isVerifyingConnection: Bool = false
     @Published var connectionError: String?
+    @Published var connectionState: ConnectionState = .disconnected
     @Published var status: GatewayStatus = GatewayStatus()
     @Published var messages: [Message] = []
     @Published var tasks: [AgentTask] = []
     @Published var cronJobs: [CronJob] = []
     @Published var connectionLog: [String] = []
+
+    /// Discrete connection events — subscribe for notification triggers.
+    let connectionEvents = PassthroughSubject<ConnectionEvent, Never>()
 
     let sessionStore = SessionStore.shared
 
@@ -81,6 +85,7 @@ class GatewayService: ObservableObject {
         authToken = nil
         clearPairing()
         isPaired = false
+        connectionState = .disconnected
         connectionLog.removeAll()
     }
 
@@ -101,6 +106,7 @@ class GatewayService: ObservableObject {
 
         disconnect()
         reconnectAttempt = 0
+        connectionState = .connecting
 
         logger.info("Opening WebSocket to \(url.absoluteString, privacy: .public)")
         log("Connecting to \(url.absoluteString)...")
@@ -135,6 +141,9 @@ class GatewayService: ObservableObject {
         webSocket = nil
         session = nil
         status.isConnected = false
+        if connectionState.isConnected {
+            connectionState = .disconnected
+        }
     }
 
     // MARK: - Handshake: respond to connect.challenge on same socket
@@ -202,7 +211,7 @@ class GatewayService: ObservableObject {
                 logger.error("Connect req send failed: \(error.localizedDescription, privacy: .public)")
                 Task { @MainActor in
                     self.log("Connect req FAILED: \(error.localizedDescription)")
-                    self.scheduleReconnect()
+                    self.scheduleReconnect(reason: "connect req failed")
                 }
             } else {
                 logger.info("Connect req sent — waiting for hello-ok")
@@ -215,23 +224,35 @@ class GatewayService: ObservableObject {
 
     // MARK: - Reconnect
 
-    private func scheduleReconnect() {
+    private func scheduleReconnect(reason: String? = nil) {
         // During initial verification, fail immediately — don't auto-retry
         if isVerifyingConnection {
             logger.error("Connection failed during verification — aborting pairing")
             log("Connection failed — could not verify gateway")
             isVerifyingConnection = false
             connectionError = "Could not connect to gateway. Check the address and token."
+            connectionState = .disconnected
+            connectionEvents.send(ConnectionEvent(kind: .disconnected, reason: reason ?? "verification failed"))
             disconnect()
             return
+        }
+
+        // Fire disconnected event on first attempt (transition from connected)
+        if reconnectAttempt == 0 {
+            connectionEvents.send(ConnectionEvent(kind: .disconnected, reason: reason))
         }
 
         reconnectAttempt += 1
         guard reconnectAttempt <= maxReconnectAttempts else {
             logger.error("Max reconnect attempts (\(self.maxReconnectAttempts)) reached — giving up")
             log("Max reconnect attempts reached — giving up. Tap Connect to retry.")
+            connectionState = .disconnected
+            connectionEvents.send(ConnectionEvent(kind: .gaveUp, reason: "max attempts reached", attempt: reconnectAttempt - 1))
             return
         }
+
+        connectionState = .reconnecting(attempt: reconnectAttempt)
+        connectionEvents.send(ConnectionEvent(kind: .reconnecting, reason: reason, attempt: reconnectAttempt))
 
         let delay = min(pow(2.0, Double(reconnectAttempt)), 30.0)
         logger.info("Scheduling reconnect #\(self.reconnectAttempt) in \(delay, privacy: .public)s")
@@ -265,16 +286,20 @@ class GatewayService: ObservableObject {
 
     private func sendProtocolPing() {
         guard let ws = webSocket else { return }
+        let sendTime = ContinuousClock.now
         ws.sendPing { [weak self] error in
+            let elapsed = ContinuousClock.now - sendTime
+            let ms = Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
             Task { @MainActor in
                 guard let self else { return }
                 if let error {
                     logger.warning("Protocol ping failed: \(error.localizedDescription, privacy: .public)")
                     self.log("Keepalive ping failed: \(error.localizedDescription)")
                     self.status.isConnected = false
-                    self.scheduleReconnect()
+                    self.scheduleReconnect(reason: "ping timeout")
                 } else {
-                    logger.debug("Protocol ping OK")
+                    logger.debug("Protocol ping OK — \(ms)ms")
+                    self.status.latencyMs = ms
                 }
             }
         }
@@ -326,7 +351,7 @@ class GatewayService: ObservableObject {
                     self.log("Connection lost: \(error.localizedDescription) [code \(nsError.code)]")
                     self.status.isConnected = false
                     self.stopPingTimer()
-                    self.scheduleReconnect()
+                    self.scheduleReconnect(reason: error.localizedDescription)
                 }
             }
         }
@@ -364,6 +389,7 @@ class GatewayService: ObservableObject {
 
         logger.info("Challenge received: nonce=\(nonce, privacy: .public) latency=\(latency)ms")
         Task { @MainActor in
+            self.status.latencyMs = Int(latency)
             self.log("IN  \(String(text.prefix(300)))")
             self.log("Challenge received (nonce: \(nonce.prefix(12))..., latency: \(latency)ms)")
             self.log("Responding with connect req on same socket...")
@@ -423,6 +449,8 @@ class GatewayService: ObservableObject {
             logger.info("Gateway confirmed connection (event: \(eventName, privacy: .public))")
             log("Connected! (\(eventName))")
             status.isConnected = true
+            connectionState = .connected
+            connectionEvents.send(ConnectionEvent(kind: .connected, latencyMs: status.latencyMs))
             reconnectAttempt = 0
             startPingTimer()
 
@@ -594,6 +622,8 @@ class GatewayService: ObservableObject {
             status.isConnected = true
             status.version = version
             status.connId = connId
+            connectionState = .connected
+            connectionEvents.send(ConnectionEvent(kind: .connected, latencyMs: status.latencyMs))
 
             // Finalize pairing on first successful connection
             if isVerifyingConnection {

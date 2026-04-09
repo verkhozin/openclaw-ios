@@ -40,6 +40,7 @@ What to build first. Ship in 2-3 weeks.
   - [ ] Вставка: `@filename.swift` / `@task-123` / `@session:design-review` — как inline-токен (chip)
   - [ ] Рендер в сообщении: кликабельный chip → навигация к сущности
   - [ ] Передача в gateway: упоминания как structured metadata в chat.send params
+- [ ] Wire up real latency (`gateway.status.latencyMs`) to SignalFieldRadarView instead of hardcoded value
 - [ ] Code blocks with syntax highlighting + copy
 - [ ] Voice input (hold to record, speech-to-text, send as text)
 - [ ] Task queue (list active/recent subagents with status)
@@ -52,6 +53,11 @@ What to build first. Ship in 2-3 weeks.
 - [ ] Lock Screen widget (usage ring)
 - [ ] Home Screen widget (morning card)
 - [ ] Live Activity for running subagents
+  - [ ] Suppress other apps' Live Activities (Dynamic Island) when our Live Activity is active — use ImmersiveHostingController (fullscreen present with prefersStatusBarHidden + prefersHomeIndicatorAutoHidden + preferredScreenEdgesDeferringSystemGestures)
+  - [ ] Connect `GatewayStatusMockView` — Signal Field Radar (gateway connection status)
+  - [ ] Connect `AgentClusterMockView` — agent cluster visualization
+  - [ ] Connect `GitGraphMockView` — git graph visualization
+  - [ ] Connect `SubAgentMockView` — sub-agent activity visualization
 - [ ] Approve/deny push actions
 - [ ] Cron list with toggle + manual run
 
@@ -84,6 +90,9 @@ What to build first. Ship in 2-3 weeks.
   - [ ] `card:recipe` — рецепт: название, ингредиенты, шаги. "Что приготовить из курицы и риса?"
   - [ ] `card:travel` — путешествие: рейс, отель, даты, документы. Агент парсит из email/booking
   - [ ] `card:subscription` — подписки: сервис, сумма, дата списания, статус
+  - [ ] Добавить карточку заполнения дней, как на гите. И в целом посмотреть виджеты на пинтересте - подумать что можно добавить. 
+   - [ ] Добавить карточку заполнения дней, как на гите. И в целом посмотреть виджеты на пинтересте - подумать что можно добавить. То же самое для виджетов
+    - [ ] Добавить карточку заполнения дней, как на гите. И в целом посмотреть виджеты на пинтересте - подумать что можно добавить. то же самое для уведомлений
 
 ## Phase 3: Integration (week 4+)
 

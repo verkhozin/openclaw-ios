@@ -14,6 +14,8 @@ struct NotificationBanner: View {
                     NotificationCardBanner(manager: manager)
                 case .pill:
                     NotificationPillBanner(manager: manager)
+                case .island:
+                    NotificationIslandBanner(manager: manager)
                 }
             }
             .zIndex(999)
@@ -32,23 +34,35 @@ struct NeumorphicIcon: View {
 
     var body: some View {
         ZStack {
-            // Inner shadow — stronger at bottom, weaker at top
+            // Circle filled with semi-transparent tint
             Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [tint.opacity(0.5), .clear],
-                        center: .bottom,
-                        startRadius: 0,
-                        endRadius: size * 0.7
-                    )
-                )
+                .fill(tint.opacity(0.1))
                 .frame(width: size, height: size)
-                .blur(radius: 4)
+
+            // Inner shadow — gradient from bottom edge, fading upward
+            Circle()
+                .stroke(
+                    LinearGradient(
+                        colors: [tint.opacity(0.4), tint.opacity(0.05)],
+                        startPoint: .bottom,
+                        endPoint: .top
+                    ),
+                    lineWidth: 3
+                )
+                .blur(radius: 2.5)
                 .clipShape(Circle())
+                .frame(width: size, height: size)
 
             // Outer white stroke
             Circle()
-                .strokeBorder(Color.white.opacity(0.5), lineWidth: 1)
+                .strokeBorder(Color(UIColor { traits in
+                    traits.userInterfaceStyle == .dark ? UIColor(white: 0.09, alpha: 1) : .white
+                }), lineWidth: 1)
+                .frame(width: size + 2, height: size + 2)
+
+            // Thin tint stroke
+            Circle()
+                .strokeBorder(tint.opacity(0.3), lineWidth: 0.5)
                 .frame(width: size, height: size)
 
             // Icon
@@ -176,7 +190,6 @@ struct NotificationCardBanner: View {
     @State private var timerProgress: CGFloat = 1
     @State private var appeared = false
 
-    private let bottomRadius: CGFloat = 20
     private let contentPadBelow: CGFloat = 48
 
     var body: some View {
@@ -200,26 +213,25 @@ struct NotificationCardBanner: View {
     @ViewBuilder
     private func cardBody(height: CGFloat, width: CGFloat) -> some View {
         if let notification = manager.current {
-            let shape = UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: bottomRadius,
-                bottomTrailingRadius: bottomRadius,
-                topTrailingRadius: 0
-            )
-
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
 
                 VStack(alignment: .leading, spacing: manager.isExpanded ? 6 : 3) {
+                    Text(notification.type.label)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(notification.type.tint)
+                        .textCase(.uppercase)
+                        .tracking(0.6)
+
                     Text(notification.title)
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
+                        .foregroundStyle(Color.white)
                         .lineLimit(manager.isExpanded ? 3 : 1)
 
                     if let subtitle = notification.subtitle {
                         Text(subtitle)
                             .font(.system(size: 14))
-                            .foregroundStyle(manager.isExpanded ? Theme.textSecondary : Theme.textMuted)
+                            .foregroundStyle(Color.white.opacity(0.6))
                             .lineLimit(manager.isExpanded ? 4 : 1)
                     }
                 }
@@ -276,20 +288,27 @@ struct NotificationCardBanner: View {
                 }
             }
             .frame(width: width, height: height)
-            .background {
-                shape
-                    .fill(Color.black)
-                    .shadow(color: .black.opacity(0.45), radius: 20, y: 10)
-            }
-            .clipShape(shape)
-            .overlay(alignment: .bottom) {
-                shape.strokeBorder(
+            .background(Color.black)
+            .clipShape(UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 6,
+                bottomTrailingRadius: 6,
+                topTrailingRadius: 0
+            ))
+            .overlay {
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 0,
+                    bottomLeadingRadius: 12,
+                    bottomTrailingRadius: 12,
+                    topTrailingRadius: 0
+                )
+                .strokeBorder(
                     LinearGradient(
-                        colors: [.clear, notification.type.tint.opacity(0.3), .clear],
+                        colors: [.clear, notification.type.tint.opacity(0.25), .clear],
                         startPoint: .leading,
                         endPoint: .trailing
                     ),
-                    lineWidth: 1
+                    lineWidth: 0.5
                 )
             }
             .offset(y: appeared ? min(dragOffset, 0) : -height)
@@ -334,6 +353,225 @@ struct NotificationCardBanner: View {
         timerProgress = 1
         guard !notification.type.isPersistent else { return }
         let duration: Double = manager.isExpanded ? 6 : 4
+        withAnimation(.linear(duration: duration)) {
+            timerProgress = 0
+        }
+    }
+}
+
+// MARK: - Island Banner
+
+/// Notification that expands from the Dynamic Island.
+/// Top edge stays pinned at diTopY. Only bottom and sides grow.
+struct NotificationIslandBanner: View {
+    @ObservedObject var manager: NotificationManager
+
+    @State private var dragOffset: CGFloat = 0
+    @State private var appeared = false
+    @State private var timerProgress: CGFloat = 1
+
+    // Calibrated Dynamic Island geometry
+    private let diTopY: CGFloat = 14
+    private let diHeight: CGFloat = 36.7
+    private let diWidth: CGFloat = 124.8
+    private let diCorner: CGFloat = 18  // half of diHeight ≈ capsule
+
+    // Expanded
+    private let expandedHPad: CGFloat = 11.3
+    private let expandedCorner: CGFloat = 49.1
+    private let expandedTopGrow: CGFloat = 6  // how much it grows upward
+
+    var body: some View {
+        if let notification = manager.current {
+            GeometryReader { geo in
+                let screenW = geo.size.width
+                let expandedW = screenW - expandedHPad * 2
+
+                let currentW = appeared ? expandedW : diWidth
+                let currentCorner = appeared ? expandedCorner : diCorner
+                let currentTopY = appeared ? diTopY - expandedTopGrow : diTopY
+
+                // Content: DI zone (hidden behind island) + visible content below
+                VStack(spacing: 0) {
+                    // Top part: matches DI height + extra top grow
+                    Color.clear.frame(height: diHeight + (appeared ? expandedTopGrow : 0))
+
+                    // Visible content below DI
+                    if appeared {
+                        islandContent(for: notification)
+                            .transition(.opacity)
+                    }
+                }
+                .frame(width: currentW)
+                .background {
+                    RoundedRectangle(cornerRadius: currentCorner, style: .continuous)
+                        .fill(Color.black)
+                        .shadow(color: .black.opacity(appeared ? 0.5 : 0), radius: 20, y: 10)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: currentCorner, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: currentCorner, style: .continuous)
+                        .strokeBorder(
+                            notification.type.tint.opacity(appeared ? 0.15 : 0),
+                            lineWidth: 0.5
+                        )
+                }
+                // Pin top edge, centered horizontally
+                .frame(maxWidth: .infinity, alignment: .top)
+                .offset(y: currentTopY + min(dragOffset, 0))
+            }
+            .ignoresSafeArea(edges: .top)
+            .zIndex(999)
+            .gesture(
+                DragGesture()
+                    .onChanged { dragOffset = $0.translation.height }
+                    .onEnded { value in
+                        if value.translation.height < -30 { manager.dismiss() }
+                        withAnimation(.spring(response: 0.3)) { dragOffset = 0 }
+                    }
+            )
+            .onTapGesture { manager.toggleExpanded() }
+            .onAppear {
+                appeared = false
+                withAnimation(.spring(response: 0.55, dampingFraction: 0.78)) {
+                    appeared = true
+                }
+                if let n = manager.current { startTimer(for: n) }
+            }
+            .onChange(of: manager.isDismissing) { _, dismissing in
+                if dismissing {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                        appeared = false
+                    } completion: {
+                        manager.finalizeDismiss()
+                    }
+                }
+            }
+            .onChange(of: manager.current?.id) { _, _ in
+                if let n = manager.current { startTimer(for: n) }
+            }
+        }
+    }
+
+    /// Content height depends on whether this is a visual or text notification.
+    private var contentHeight: CGFloat {
+        guard let notification = manager.current else { return 100 }
+        if let card = notification.visualCard {
+            switch card.type {
+            case .notifyGit:      return 130
+            case .notifyWorkflow: return 120
+            case .notifySubagent: return 120
+            default:              return 100
+            }
+        }
+        return 100
+    }
+
+    /// Expanded content — visual card or Live Activity style text.
+    @ViewBuilder
+    private func islandContent(for notification: AppNotification) -> some View {
+        if let card = notification.visualCard {
+            visualContent(for: card)
+                .frame(height: contentHeight)
+        } else {
+            textContent(for: notification)
+        }
+    }
+
+    /// Rich visual notification — GitGraphView, AgentClusterView, SubAgentView.
+    @ViewBuilder
+    private func visualContent(for card: ServiceCard) -> some View {
+        switch card.type {
+        case .notifyGit:
+            GitGraphView(event: gitEvent(from: card))
+
+        case .notifyWorkflow:
+            AgentClusterView(
+                workflowName: card.fields["workflow"] ?? "workflow",
+                agentCount: Int(card.fields["agents"] ?? "6") ?? 6
+            )
+
+        case .notifySubagent:
+            SubAgentView(
+                taskText: card.fields["task"] ?? "",
+                status: card.fields["status"] == "done" ? .done : .running
+            )
+
+        default:
+            EmptyView()
+        }
+    }
+
+    /// Build GitEvent from card fields.
+    private func gitEvent(from card: ServiceCard) -> GitEvent {
+        let typeStr = card.fields["type"] ?? "commit"
+        let branch = card.fields["branch"] ?? "main"
+        let source = card.fields["sourceBranch"] ?? "main"
+        let commits = Int(card.fields["commits"] ?? "1") ?? 1
+        let target = card.fields["deployTarget"] ?? ""
+
+        let eventType: GitEventType
+        switch typeStr {
+        case "branch": eventType = .branchCreated
+        case "deploy": eventType = .deployTriggered
+        default:       eventType = .commitPushed
+        }
+
+        return GitEvent(
+            type: eventType,
+            branch: branch,
+            sourceBranch: source,
+            commitCount: commits,
+            deployTarget: target
+        )
+    }
+
+    /// Text-only island content — Live Activity style.
+    @ViewBuilder
+    private func textContent(for notification: AppNotification) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: notification.type.icon)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(notification.type.tint)
+
+                    Text(notification.type.label.uppercased())
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(notification.type.tint)
+                        .tracking(0.5)
+                }
+
+                Spacer(minLength: 12)
+
+                Text(notification.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+
+            if let subtitle = notification.subtitle {
+                Text(subtitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.white.opacity(0.5))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+            }
+
+            Spacer().frame(height: 46)
+        }
+    }
+
+    private func startTimer(for notification: AppNotification) {
+        timerProgress = 1
+        guard !notification.type.isPersistent else { return }
+        // Visual notifications get more time for animations to play
+        let base: Double = notification.visualCard != nil ? 8 : 4
+        let duration: Double = manager.isExpanded ? base + 2 : base
         withAnimation(.linear(duration: duration)) {
             timerProgress = 0
         }

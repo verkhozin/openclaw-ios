@@ -27,6 +27,11 @@ struct ServiceCard: Identifiable, Codable {
         case lead = "lead"
         // Todo
         case todo = "todo"
+        // Notifications
+        case notify = "notify"
+        case notifyGit = "notify.git"
+        case notifyWorkflow = "notify.workflow"
+        case notifySubagent = "notify.subagent"
         // Generic
         case unknown
     }

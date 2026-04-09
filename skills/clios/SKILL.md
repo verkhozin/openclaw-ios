@@ -205,6 +205,144 @@ action: View file
 action_target: file:landing/v4-flux.html
 ```
 
+### notify.git
+When: agent creates a branch, pushes commits, or triggers a deploy. Renders animated git graph in Dynamic Island (GitGraphView).
+
+**type** determines the graph shape:
+- `branch` — fork path from source branch to new branch (purple)
+- `commit` — linear graph with commit nodes (green)
+- `deploy` — commit graph + deploy node with dashed connector (blue)
+
+```
+type: commit
+branch: feat/notifications
+sourceBranch: main
+commits: 3
+deployTarget: staging
+```
+
+**Fields:**
+- `type` — required: `branch`, `commit`, or `deploy`
+- `branch` — required: branch name shown in label
+- `sourceBranch` — required for `branch` type: parent branch name
+- `commits` — required for `commit` and `deploy`: number of commit nodes (1, 3, 12, etc.)
+- `deployTarget` — required for `deploy`: target environment name
+
+**Examples:**
+
+Branch created:
+````
+```card:notify.git
+type: branch
+branch: feat/notifications
+sourceBranch: main
+```
+````
+
+Commits pushed:
+````
+```card:notify.git
+type: commit
+branch: feat/notifications
+sourceBranch: main
+commits: 3
+```
+````
+
+Deploy triggered:
+````
+```card:notify.git
+type: deploy
+branch: feat/notifications
+sourceBranch: main
+commits: 3
+deployTarget: staging
+```
+````
+
+### notify.workflow
+When: agent starts a multi-agent workflow (pipeline). Renders animated DAG in Dynamic Island (AgentClusterView).
+
+```
+workflow: lead-gen
+agents: 6
+```
+
+**Fields:**
+- `workflow` — required: workflow/pipeline name
+- `agents` — required: number of agents in the cluster
+
+**Example:**
+````
+```card:notify.workflow
+workflow: lead-gen
+agents: 6
+```
+````
+
+### notify.subagent
+When: agent spawns a sub-agent or sub-agent completes. Renders typewriter task description with status indicator in Dynamic Island (SubAgentView).
+
+```
+status: running
+task: Researching company background and extracting key decision makers
+```
+
+**Fields:**
+- `status` — required: `running` (animated pulse + typewriter) or `done` (static green checkmark)
+- `task` — required: description of what the sub-agent is doing/did (max 3 lines)
+
+**Examples:**
+
+Sub-agent started:
+````
+```card:notify.subagent
+status: running
+task: Browsing product page and extracting pricing information
+```
+````
+
+Sub-agent finished:
+````
+```card:notify.subagent
+status: done
+task: Qualified 3 leads — Stripe, Vercel, Linear — confidence 87%, 74%, 91%
+```
+````
+
+### notify
+When: generic notification that doesn't need a visual graph — simple text banner. Use for events that don't fit git/workflow/subagent types.
+
+```
+kind: cron
+title: Daily digest triggered
+subtitle: 5 emails, 2 tasks
+style: pill
+```
+
+**kind** values:
+
+| kind | Icon | Color | Use when |
+|------|------|-------|----------|
+| `commit` | sparkles | orange | Standalone commit note (prefer `notify.git` for graph) |
+| `deploy` | sparkles | orange | Quick deploy note (prefer `notify.git` for graph) |
+| `agent` | sparkles | orange | Agent lifecycle |
+| `task.done` | checkmark.circle | green | Task completed |
+| `task.fail` | xmark.circle | red | Task failed |
+| `cron` | clock | yellow | Cron job triggered |
+| `system` | info.circle | gray | Generic (default) |
+
+**style** values (optional, default `pill`):
+- `pill` — capsule under Dynamic Island, least intrusive
+- `card` — full-width card from top
+- `island` — expands from Dynamic Island, most prominent
+
+**Fields:**
+- `kind` — required, determines icon/color
+- `title` — required, main banner text
+- `subtitle` — optional, secondary line
+- `style` — optional (default: pill)
+
 ### session.title
 When: first reply in a NEW session (not main). 3-5 word title.
 ```

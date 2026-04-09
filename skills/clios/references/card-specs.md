@@ -53,6 +53,34 @@ Appears as circular avatar in stories bar
 Auto-dismisses after user views
 Use sparingly -- only for notable events
 
+### notify.git
+Required: type, branch
+Conditional: sourceBranch (required for type=branch), commits (required for type=commit|deploy), deployTarget (required for type=deploy)
+Type values: branch (purple, fork graph), commit (green, linear graph), deploy (blue, graph + deploy node)
+Renders GitGraphView in Dynamic Island expansion.
+Fires regardless of which session user is viewing.
+
+### notify.workflow
+Required: workflow, agents
+Renders AgentClusterView in Dynamic Island expansion — animated 3→1→2 DAG.
+Fires regardless of which session user is viewing.
+
+### notify.subagent
+Required: status, task
+Status values: running (animated pulse + typewriter text), done (static green checkmark)
+Task: max 3 lines of text describing the sub-agent's work.
+Renders SubAgentView in Dynamic Island expansion.
+Fires regardless of which session user is viewing.
+
+### notify
+Required: kind, title
+Optional: subtitle, style
+Kind values: commit, deploy, agent, agent.start, agent.stop, task.done, task.fail, cron, system
+Style values: pill (default), card, island
+Simple text banner — no visualization. Use notify.git/notify.workflow/notify.subagent for rich visuals.
+Fires regardless of which session user is viewing.
+Parsed by CardParser, then handled in SessionStore.postNotifyCards().
+
 ## Deferred Cards (not in MVP, but format defined)
 
 ### github.issue
