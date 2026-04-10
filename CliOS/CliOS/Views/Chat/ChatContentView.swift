@@ -360,6 +360,10 @@ struct ChatBubble: View {
                         size: level == 1 ? 22 : level == 2 ? 19 : 17,
                         weight: level <= 2 ? .bold : .semibold
                     ))
+            case .mention(_, let type, _, let name):
+                result + Text("\(Image(systemName: type.icon)) \(name)")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(type.tint)
             }
         }
     }

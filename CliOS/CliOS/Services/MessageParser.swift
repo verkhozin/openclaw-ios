@@ -158,8 +158,47 @@ enum MessageParser {
         return spans
     }
 
-    /// Parse bold, italic, inline code within a single line.
+    // Regex: @[type:entityId:displayName]
+    private static let mentionPattern = try! NSRegularExpression(
+        pattern: #"@\[(\w+):([^:]+):([^\]]+)\]"#
+    )
+
+    /// Parse bold, italic, inline code, and mention markers within a single line.
     private static func parseInlineSpans(_ text: String) -> [InlineSpan] {
+        // First pass: split on mention markers, then parse markdown in non-mention parts
+        let nsText = text as NSString
+        let matches = mentionPattern.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+
+        guard !matches.isEmpty else {
+            return parseMarkdownSpans(text)
+        }
+
+        var spans: [InlineSpan] = []
+        var pos = 0
+        for match in matches {
+            // Text before mention
+            if match.range.location > pos {
+                let before = nsText.substring(with: NSRange(location: pos, length: match.range.location - pos))
+                spans.append(contentsOf: parseMarkdownSpans(before))
+            }
+            // Mention
+            let typeStr = nsText.substring(with: match.range(at: 1))
+            let entityId = nsText.substring(with: match.range(at: 2))
+            let name = nsText.substring(with: match.range(at: 3))
+            let entityType = EntityType(rawValue: typeStr) ?? .file
+            spans.append(.mention(type: entityType, entityId: entityId, displayName: name))
+            pos = match.range.location + match.range.length
+        }
+        // Text after last mention
+        if pos < nsText.length {
+            let after = nsText.substring(from: pos)
+            spans.append(contentsOf: parseMarkdownSpans(after))
+        }
+        return spans
+    }
+
+    /// Parse bold, italic, inline code within a single line (no mention handling).
+    private static func parseMarkdownSpans(_ text: String) -> [InlineSpan] {
         var spans: [InlineSpan] = []
         var current = text[...]
 
