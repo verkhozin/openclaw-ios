@@ -67,6 +67,31 @@ final class MentionTextController: ObservableObject {
 
 // MARK: - MentionTextView
 
+// MARK: - UITextView subclass for copy/paste mention fallback
+
+private class MentionUITextView: UITextView {
+    override func copy(_ sender: Any?) {
+        let attr = attributedText ?? NSAttributedString()
+        let plain = Self.plainTextWithMentions(from: attr, selectedRange: selectedRange)
+        UIPasteboard.general.string = plain
+    }
+
+    static func plainTextWithMentions(from attr: NSAttributedString, selectedRange: NSRange) -> String {
+        let range = selectedRange.length > 0
+            ? selectedRange
+            : NSRange(location: 0, length: attr.length)
+        var result = ""
+        attr.enumerateAttributes(in: range) { attrs, subRange, _ in
+            if let mention = attrs[.attachment] as? MentionAttachment {
+                result += "@\(mention.displayName)"
+            } else {
+                result += (attr.string as NSString).substring(with: subRange)
+            }
+        }
+        return result
+    }
+}
+
 struct MentionTextView: UIViewRepresentable {
     @Binding var text: String
     @Binding var isFocused: Bool
@@ -84,7 +109,7 @@ struct MentionTextView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
+        let tv = MentionUITextView()
         tv.delegate = context.coordinator
         tv.font = font
         tv.textColor = textColor
@@ -141,6 +166,7 @@ struct MentionTextView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: MentionTextView
         private weak var placeholderLabel: UILabel?
+        private var pendingDeleteRange: NSRange?
 
         init(parent: MentionTextView) {
             self.parent = parent
@@ -164,7 +190,54 @@ struct MentionTextView: UIViewRepresentable {
             placeholderLabel?.isHidden = tv.attributedText.length > 0
         }
 
+        // MARK: - Atomic mention behavior
+
+        func textView(_ tv: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            let attr = tv.attributedText!
+
+            // Backspace into a mention attachment
+            if text.isEmpty && range.length == 1 && range.location < attr.length {
+                if attr.attribute(.attachment, at: range.location, effectiveRange: nil) is MentionAttachment {
+                    if pendingDeleteRange == range {
+                        // Second backspace — allow deletion
+                        pendingDeleteRange = nil
+                        clearMentionHighlight(in: tv)
+                        return true
+                    }
+                    // First backspace — highlight, block deletion
+                    pendingDeleteRange = range
+                    highlightMention(at: range, in: tv)
+                    return false
+                }
+            }
+
+            // Any other edit clears pending state
+            if pendingDeleteRange != nil {
+                clearMentionHighlight(in: tv)
+                pendingDeleteRange = nil
+            }
+            return true
+        }
+
+        private func highlightMention(at range: NSRange, in tv: UITextView) {
+            let mutable = NSMutableAttributedString(attributedString: tv.attributedText!)
+            mutable.addAttribute(.backgroundColor, value: UIColor.systemRed.withAlphaComponent(0.3), range: range)
+            let sel = tv.selectedRange
+            tv.attributedText = mutable
+            tv.selectedRange = sel
+        }
+
+        private func clearMentionHighlight(in tv: UITextView) {
+            let mutable = NSMutableAttributedString(attributedString: tv.attributedText!)
+            let fullRange = NSRange(location: 0, length: mutable.length)
+            mutable.removeAttribute(.backgroundColor, range: fullRange)
+            let sel = tv.selectedRange
+            tv.attributedText = mutable
+            tv.selectedRange = sel
+        }
+
         func textViewDidChange(_ tv: UITextView) {
+            pendingDeleteRange = nil
             parent.text = tv.text
             updatePlaceholder(tv)
             tv.invalidateIntrinsicContentSize()
