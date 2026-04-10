@@ -314,7 +314,6 @@ struct ChatInputOverlay: View {
                 .animation(transition, value: hasText)
             }
         }
-        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: mentionQuery != nil)
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 inputFocused = true
