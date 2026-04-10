@@ -44,6 +44,29 @@ final class MentionTextController: ObservableObject {
         tv.delegate?.textViewDidChange?(tv)
     }
 
+    /// Extract plain text + structured mention metadata from the attributed text.
+    func extractMessage() -> (text: String, mentions: [[String: String]]) {
+        guard let tv = textView else { return ("", []) }
+        let attr = tv.attributedText ?? NSAttributedString()
+        var plainText = ""
+        var mentions: [[String: String]] = []
+
+        attr.enumerateAttributes(in: NSRange(location: 0, length: attr.length)) { attrs, range, _ in
+            if let mention = attrs[.attachment] as? MentionAttachment {
+                let marker = "@[\(mention.mentionType.rawValue):\(mention.entityId):\(mention.displayName)]"
+                mentions.append([
+                    "type": mention.mentionType.rawValue,
+                    "entityId": mention.entityId,
+                    "name": mention.displayName,
+                ])
+                plainText += marker
+            } else {
+                plainText += (attr.string as NSString).substring(with: range)
+            }
+        }
+        return (plainText.trimmingCharacters(in: .whitespacesAndNewlines), mentions)
+    }
+
     /// Replace the @query text at `range` with a mention chip for the given entity.
     func replaceMention(range: NSRange, entity: EntityItem) {
         guard let tv = textView else { return }

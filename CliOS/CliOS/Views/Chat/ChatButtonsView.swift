@@ -293,7 +293,8 @@ struct ChatInputOverlay: View {
                 // Send / Close
                 Button(action: {
                     if hasText {
-                        gateway.sendMessage(messageText.trimmingCharacters(in: .whitespacesAndNewlines))
+                        let (text, mentions) = mentionController.extractMessage()
+                        gateway.sendMessage(text, mentions: mentions)
                         messageText = ""
                     }
                     withAnimation(transition) {
