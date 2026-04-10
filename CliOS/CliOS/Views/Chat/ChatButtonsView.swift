@@ -236,14 +236,14 @@ struct ChatInputOverlay: View {
         HStack(alignment: .bottom, spacing: 8) {
             // Paperclip — mock mention insert
             Button(action: {
-                let mocks: [(String, String, UIColor)] = [
-                    ("readme.md", "doc.fill", .systemOrange),
-                    ("Design Chat", "bubble.left.fill", .systemBlue),
-                    ("Fix navbar #42", "checkmark.circle.fill", .systemGreen),
-                    ("CodeAgent", "cpu.fill", .systemPurple),
+                let mocks: [(EntityType, String, String)] = [
+                    (.file, "file:readme.md", "readme.md"),
+                    (.session, "session:design-chat", "Design Chat"),
+                    (.task, "task:42", "Fix navbar #42"),
+                    (.agent, "agent:code", "CodeAgent"),
                 ]
                 let mock = mocks[mockMentionIndex % mocks.count]
-                mentionController.insertMention(name: mock.0, icon: mock.1, color: mock.2)
+                mentionController.insertMention(type: mock.0, entityId: mock.1, name: mock.2)
                 mockMentionIndex += 1
             }) {
                 Image(systemName: "paperclip")

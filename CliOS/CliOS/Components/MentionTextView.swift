@@ -8,7 +8,7 @@ import UIKit
 final class MentionTextController: ObservableObject {
     weak var textView: UITextView?
 
-    func insertMention(name: String, icon: String, color: UIColor) {
+    func insertMention(type: EntityType, entityId: String, name: String) {
         guard let tv = textView else { return }
         let font = tv.font ?? .systemFont(ofSize: 16)
         let textColor = tv.textColor ?? .white
@@ -26,21 +26,9 @@ final class MentionTextController: ObservableObject {
             }
         }
 
-        // Icon attachment
-        let attachment = NSTextAttachment()
-        let symbolSize = font.pointSize - 2
-        let config = UIImage.SymbolConfiguration(pointSize: symbolSize, weight: .semibold)
-        attachment.image = UIImage(systemName: icon, withConfiguration: config)?
-            .withTintColor(color, renderingMode: .alwaysOriginal)
-        let yOffset = (font.capHeight - symbolSize) / 2
-        attachment.bounds = CGRect(x: 0, y: yOffset, width: symbolSize, height: symbolSize)
+        // Mention chip (single \u{FFFC} character with rendered pill image)
+        let attachment = MentionAttachment(type: type, entityId: entityId, displayName: name, font: font)
         mention.append(NSAttributedString(attachment: attachment))
-
-        // Mention name
-        mention.append(NSAttributedString(string: " \(name)", attributes: [
-            .foregroundColor: color,
-            .font: UIFont.systemFont(ofSize: font.pointSize, weight: .medium),
-        ]))
 
         // Space after with default typing style
         mention.append(NSAttributedString(string: " ", attributes: [
