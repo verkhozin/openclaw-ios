@@ -1072,11 +1072,11 @@ class GatewayService: ObservableObject {
 
     // MARK: - Send message to agent
 
-    func sendMessage(_ text: String) {
+    func sendMessage(_ text: String, mentions: [[String: String]] = []) {
         let sessionKey = sessionStore.currentSessionKey.isEmpty
             ? status.mainSessionKey
             : sessionStore.currentSessionKey
-        logger.info("Sending message to agent (\(text.count) chars) session=\(sessionKey, privacy: .public)")
+        logger.info("Sending message to agent (\(text.count) chars, \(mentions.count) mentions) session=\(sessionKey, privacy: .public)")
         log("OUT chat.send → session=\(sessionKey) (current=\(sessionStore.currentSessionKey), main=\(status.mainSessionKey))")
 
         // Prepend card capability prompt (+ project context if applicable) to the first message in new sessions
@@ -1093,15 +1093,20 @@ class GatewayService: ObservableObject {
 
         let prepared = sessionStore.prepareSend(text: text, sessionKey: sessionKey)
 
+        var params: [String: Any] = [
+            "sessionKey": sessionKey,
+            "message": messageText,
+            "idempotencyKey": prepared.idempotencyKey,
+        ]
+        if !mentions.isEmpty {
+            params["mentions"] = mentions
+        }
+
         let frame: [String: Any] = [
             "type": "req",
             "id": prepared.messageId,
             "method": "chat.send",
-            "params": [
-                "sessionKey": sessionKey,
-                "message": messageText,
-                "idempotencyKey": prepared.idempotencyKey
-            ]
+            "params": params,
         ]
         sendJSON(frame) { [weak self] success in
             Task { @MainActor in

@@ -360,6 +360,10 @@ struct ChatBubble: View {
                         size: level == 1 ? 22 : level == 2 ? 19 : 17,
                         weight: level <= 2 ? .bold : .semibold
                     ))
+            case .mention(_, let type, _, let name):
+                result + Text("\(Image(systemName: type.icon)) \(name)")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(type.tint)
             }
         }
     }
@@ -819,4 +823,19 @@ extension View {
 #Preview {
     ChatContentView()
         .environmentObject(GatewayService.shared)
+}
+
+#Preview("Mention Chips") {
+    VStack(spacing: 16) {
+        ChatBubble(
+            text: "Check the @[file:file:readme.md:readme.md] and ask @[agent:scout:Scout Agent] about it",
+            isUser: false
+        )
+        ChatBubble(
+            text: "Done! Updated @[task:42:Fix navbar #42] and notified @[session:design:Design Chat]",
+            isUser: false
+        )
+    }
+    .padding()
+    .background(Color(.secondarySystemBackground))
 }
