@@ -248,6 +248,7 @@ struct MentionTextView: UIViewRepresentable {
             let sel = tv.selectedRange
             tv.attributedText = mutable
             tv.selectedRange = sel
+            ensureTypingAttributes(tv)
         }
 
         private func clearMentionHighlight(in tv: UITextView) {
@@ -257,6 +258,16 @@ struct MentionTextView: UIViewRepresentable {
             let sel = tv.selectedRange
             tv.attributedText = mutable
             tv.selectedRange = sel
+            ensureTypingAttributes(tv)
+        }
+
+        /// Reset typing attributes to default font/color after any change.
+        /// Prevents UITextView from inheriting attachment or highlight styles.
+        private func ensureTypingAttributes(_ tv: UITextView) {
+            tv.typingAttributes = [
+                .font: parent.font,
+                .foregroundColor: parent.textColor,
+            ]
         }
 
         func textViewDidChange(_ tv: UITextView) {
@@ -264,10 +275,12 @@ struct MentionTextView: UIViewRepresentable {
             parent.text = tv.text
             updatePlaceholder(tv)
             tv.invalidateIntrinsicContentSize()
+            ensureTypingAttributes(tv)
             detectMentionTrigger(in: tv)
         }
 
         func textViewDidChangeSelection(_ tv: UITextView) {
+            ensureTypingAttributes(tv)
             detectMentionTrigger(in: tv)
         }
 
