@@ -181,7 +181,7 @@ struct MentionTextView: UIViewRepresentable {
         guard w > 0 else { return nil }
         let size = uiView.sizeThatFits(CGSize(width: w, height: .greatestFiniteMagnitude))
         let maxH = font.lineHeight * CGFloat(maxLines)
-        return CGSize(width: size.width, height: max(font.lineHeight, min(size.height, maxH)))
+        return CGSize(width: w, height: max(font.lineHeight, min(size.height, maxH)))
     }
 
     // MARK: - Coordinator
