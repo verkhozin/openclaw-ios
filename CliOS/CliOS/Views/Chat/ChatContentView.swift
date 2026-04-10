@@ -824,3 +824,18 @@ extension View {
     ChatContentView()
         .environmentObject(GatewayService.shared)
 }
+
+#Preview("Mention Chips") {
+    VStack(spacing: 16) {
+        ChatBubble(
+            text: "Check the @[file:file:readme.md:readme.md] and ask @[agent:scout:Scout Agent] about it",
+            isUser: false
+        )
+        ChatBubble(
+            text: "Done! Updated @[task:42:Fix navbar #42] and notified @[session:design:Design Chat]",
+            isUser: false
+        )
+    }
+    .padding()
+    .background(Color(.secondarySystemBackground))
+}
