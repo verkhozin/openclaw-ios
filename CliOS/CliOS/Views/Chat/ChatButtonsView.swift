@@ -226,6 +226,8 @@ struct ChatInputOverlay: View {
     @State private var inputFocused = false
     @StateObject private var mentionController = MentionTextController()
     @State private var mockMentionIndex = 0
+    @State private var mentionQuery: String? = nil
+    @State private var mentionAnchorRange: NSRange? = nil
 
     private let btnHeight: CGFloat = 48
     private let transition = Animation.easeInOut(duration: 0.5)
@@ -233,63 +235,85 @@ struct ChatInputOverlay: View {
     var body: some View {
         let hasText = !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        HStack(alignment: .bottom, spacing: 8) {
-            // Paperclip — mock mention insert
-            Button(action: {
-                let mocks: [(EntityType, String, String)] = [
-                    (.file, "file:readme.md", "readme.md"),
-                    (.session, "session:design-chat", "Design Chat"),
-                    (.task, "task:42", "Fix navbar #42"),
-                    (.agent, "agent:code", "CodeAgent"),
-                ]
-                let mock = mocks[mockMentionIndex % mocks.count]
-                mentionController.insertMention(type: mock.0, entityId: mock.1, name: mock.2)
-                mockMentionIndex += 1
-            }) {
-                Image(systemName: "paperclip")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Color(.label))
-                    .symbolEffect(.bounce, value: isComposing)
+        VStack(spacing: 8) {
+            // Mention autocomplete popup
+            if let query = mentionQuery {
+                MentionPopupView(
+                    query: query,
+                    onSelect: { entity in
+                        if let range = mentionAnchorRange {
+                            mentionController.replaceMention(range: range, entity: entity)
+                            EntityIndex.shared.recordUsage(id: entity.id)
+                        }
+                        mentionQuery = nil
+                    },
+                    onDismiss: { mentionQuery = nil }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            .buttonStyle(BounceButtonStyle())
-            .frame(width: btnHeight, height: btnHeight)
-            .modifier(GlassCircleBackground())
 
-            // MentionTextView
-            MentionTextView(
-                text: $messageText,
-                isFocused: $inputFocused,
-                textColor: UIColor.label,
-                tintColor: UIColor.label,
-                controller: mentionController
-            )
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .frame(minHeight: btnHeight)
-            .modifier(GlassRoundedBackground(cornerRadius: 22))
+            // Input bar
+            HStack(alignment: .bottom, spacing: 8) {
+                // Paperclip — mock mention insert
+                Button(action: {
+                    let mocks: [(EntityType, String, String)] = [
+                        (.file, "file:readme.md", "readme.md"),
+                        (.session, "session:design-chat", "Design Chat"),
+                        (.task, "task:42", "Fix navbar #42"),
+                        (.agent, "agent:code", "CodeAgent"),
+                    ]
+                    let mock = mocks[mockMentionIndex % mocks.count]
+                    mentionController.insertMention(type: mock.0, entityId: mock.1, name: mock.2)
+                    mockMentionIndex += 1
+                }) {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Color(.label))
+                        .symbolEffect(.bounce, value: isComposing)
+                }
+                .buttonStyle(BounceButtonStyle())
+                .frame(width: btnHeight, height: btnHeight)
+                .modifier(GlassCircleBackground())
 
-            // Send / Close
-            Button(action: {
-                if hasText {
-                    gateway.sendMessage(messageText.trimmingCharacters(in: .whitespacesAndNewlines))
-                    messageText = ""
+                // MentionTextView
+                MentionTextView(
+                    text: $messageText,
+                    isFocused: $inputFocused,
+                    textColor: UIColor.label,
+                    tintColor: UIColor.label,
+                    controller: mentionController,
+                    mentionQuery: $mentionQuery,
+                    mentionAnchorRange: $mentionAnchorRange
+                )
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .frame(minHeight: btnHeight)
+                .modifier(GlassRoundedBackground(cornerRadius: 22))
+
+                // Send / Close
+                Button(action: {
+                    if hasText {
+                        gateway.sendMessage(messageText.trimmingCharacters(in: .whitespacesAndNewlines))
+                        messageText = ""
+                    }
+                    withAnimation(transition) {
+                        isComposing = false
+                        inputFocused = false
+                    }
+                }) {
+                    Image(systemName: hasText ? "arrow.up" : "xmark")
+                        .contentTransition(.symbolEffect(.replace.downUp.byLayer))
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(hasText ? Color(.systemBackground) : Color(.secondaryLabel))
+                        .symbolEffect(.bounce, value: isComposing)
                 }
-                withAnimation(transition) {
-                    isComposing = false
-                    inputFocused = false
-                }
-            }) {
-                Image(systemName: hasText ? "arrow.up" : "xmark")
-                    .contentTransition(.symbolEffect(.replace.downUp.byLayer))
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(hasText ? Color(.systemBackground) : Color(.secondaryLabel))
-                    .symbolEffect(.bounce, value: isComposing)
+                .buttonStyle(BounceButtonStyle())
+                .frame(width: btnHeight, height: btnHeight)
+                .modifier(SendButtonBackground(hasText: hasText))
+                .animation(transition, value: hasText)
             }
-            .buttonStyle(BounceButtonStyle())
-            .frame(width: btnHeight, height: btnHeight)
-            .modifier(SendButtonBackground(hasText: hasText))
-            .animation(transition, value: hasText)
         }
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: mentionQuery != nil)
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 inputFocused = true

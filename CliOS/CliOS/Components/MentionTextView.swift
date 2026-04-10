@@ -43,6 +43,26 @@ final class MentionTextController: ObservableObject {
 
         tv.delegate?.textViewDidChange?(tv)
     }
+
+    /// Replace the @query text at `range` with a mention chip for the given entity.
+    func replaceMention(range: NSRange, entity: EntityItem) {
+        guard let tv = textView else { return }
+        let font = tv.font ?? .systemFont(ofSize: 16)
+        let textColor = tv.textColor ?? .white
+
+        let mutable = NSMutableAttributedString(attributedString: tv.attributedText)
+
+        let attachment = MentionAttachment(type: entity.type, entityId: entity.id, displayName: entity.name, font: font)
+        let mentionStr = NSMutableAttributedString(attachment: attachment)
+        mentionStr.append(NSAttributedString(string: " ", attributes: [.font: font, .foregroundColor: textColor]))
+
+        mutable.replaceCharacters(in: range, with: mentionStr)
+        tv.attributedText = mutable
+        tv.selectedRange = NSRange(location: range.location + mentionStr.length, length: 0)
+        tv.typingAttributes = [.font: font, .foregroundColor: textColor]
+
+        tv.delegate?.textViewDidChange?(tv)
+    }
 }
 
 // MARK: - MentionTextView
@@ -56,6 +76,8 @@ struct MentionTextView: UIViewRepresentable {
     var font: UIFont = .systemFont(ofSize: 16)
     var maxLines: Int = 6
     var controller: MentionTextController?
+    var mentionQuery: Binding<String?>?
+    var mentionAnchorRange: Binding<NSRange?>?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -82,6 +104,7 @@ struct MentionTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
+        context.coordinator.parent = self
         controller?.textView = tv
 
         if isFocused && !tv.isFirstResponder {
@@ -145,6 +168,11 @@ struct MentionTextView: UIViewRepresentable {
             parent.text = tv.text
             updatePlaceholder(tv)
             tv.invalidateIntrinsicContentSize()
+            detectMentionTrigger(in: tv)
+        }
+
+        func textViewDidChangeSelection(_ tv: UITextView) {
+            detectMentionTrigger(in: tv)
         }
 
         func textViewDidBeginEditing(_ tv: UITextView) {
@@ -153,6 +181,46 @@ struct MentionTextView: UIViewRepresentable {
 
         func textViewDidEndEditing(_ tv: UITextView) {
             DispatchQueue.main.async { self.parent.isFocused = false }
+        }
+
+        // MARK: - @ Detection
+
+        private func detectMentionTrigger(in tv: UITextView) {
+            guard let queryBinding = parent.mentionQuery,
+                  let rangeBinding = parent.mentionAnchorRange else { return }
+
+            let text = tv.text ?? ""
+            let cursor = tv.selectedRange.location
+            guard cursor > 0, tv.selectedRange.length == 0 else {
+                queryBinding.wrappedValue = nil
+                return
+            }
+
+            let nsText = text as NSString
+            var i = cursor - 1
+            while i >= 0 {
+                let ch = nsText.substring(with: NSRange(location: i, length: 1))
+                if ch == "@" {
+                    let validStart: Bool
+                    if i == 0 {
+                        validStart = true
+                    } else {
+                        let prev = nsText.substring(with: NSRange(location: i - 1, length: 1))
+                        validStart = prev.rangeOfCharacter(from: .whitespacesAndNewlines) != nil
+                            || prev == "\u{FFFC}"
+                    }
+                    if validStart {
+                        queryBinding.wrappedValue = nsText.substring(
+                            with: NSRange(location: i + 1, length: cursor - i - 1)
+                        )
+                        rangeBinding.wrappedValue = NSRange(location: i, length: cursor - i)
+                        return
+                    }
+                }
+                if ch == " " || ch == "\n" { break }
+                i -= 1
+            }
+            queryBinding.wrappedValue = nil
         }
     }
 }
