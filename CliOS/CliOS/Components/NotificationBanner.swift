@@ -456,6 +456,9 @@ struct NotificationIslandBanner: View {
     /// Content height depends on whether this is a visual or text notification.
     private var contentHeight: CGFloat {
         guard let notification = manager.current else { return 100 }
+        if notification.type == .connectionLost || notification.type == .connectionRestored {
+            return 130
+        }
         if let card = notification.visualCard {
             switch card.type {
             case .notifyGit:      return 130
@@ -467,10 +470,16 @@ struct NotificationIslandBanner: View {
         return 100
     }
 
-    /// Expanded content — visual card or Live Activity style text.
+    /// Expanded content — visual card, radar, or Live Activity style text.
     @ViewBuilder
     private func islandContent(for notification: AppNotification) -> some View {
-        if let card = notification.visualCard {
+        if notification.type == .connectionLost || notification.type == .connectionRestored {
+            SignalFieldRadarView(
+                state: notification.type == .connectionRestored ? .connected : .reconnecting,
+                latencyMs: GatewayService.shared.status.latencyMs
+            )
+            .frame(height: contentHeight)
+        } else if let card = notification.visualCard {
             visualContent(for: card)
                 .frame(height: contentHeight)
         } else {
@@ -570,7 +579,10 @@ struct NotificationIslandBanner: View {
         timerProgress = 1
         guard !notification.type.isPersistent else { return }
         // Visual notifications get more time for animations to play
-        let base: Double = notification.visualCard != nil ? 8 : 4
+        let base: Double
+        if notification.type == .connectionRestored { base = 2.5 }
+        else if notification.visualCard != nil { base = 8 }
+        else { base = 4 }
         let duration: Double = manager.isExpanded ? base + 2 : base
         withAnimation(.linear(duration: duration)) {
             timerProgress = 0

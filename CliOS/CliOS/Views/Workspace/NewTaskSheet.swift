@@ -4,6 +4,8 @@ struct NewTaskSheet: View {
     @ObservedObject var vm: TaskTrackerViewModel
     @Environment(\.dismiss) private var dismiss
 
+    var initialTitle: String = ""
+
     @State private var title = ""
     @State private var desc = ""
     @State private var status = "todo"
@@ -84,6 +86,11 @@ struct NewTaskSheet: View {
             }
         }
         .presentationDetents([.medium])
+        .onAppear {
+            if title.isEmpty && !initialTitle.isEmpty {
+                title = initialTitle
+            }
+        }
     }
 
     private func createTask() {

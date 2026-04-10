@@ -7,15 +7,19 @@ struct CLiOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            Group {
+            ZStack {
                 if showMainAfterConnect {
                     MainTabView()
                         .environmentObject(gateway)
+                        .transition(.opacity.animation(.easeOut(duration: 0.6)))
                 } else {
                     PairingView()
                         .environmentObject(gateway)
+                        .transition(.opacity.animation(.easeOut(duration: 0.4)))
                 }
             }
+            .preferredColorScheme(.dark)
+            .notificationOverlay(NotificationManager.shared)
             .onOpenURL { url in
                 CLiOSApp.handleIncomingURL(url)
             }
@@ -33,9 +37,13 @@ struct CLiOSApp: App {
                 }
             }
             .onAppear {
-                // Already paired from keychain — go straight in
+                // Already paired from keychain — brief pause then animate in
                 if gateway.isPaired {
-                    showMainAfterConnect = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        withAnimation(.easeOut(duration: 0.5)) {
+                            showMainAfterConnect = true
+                        }
+                    }
                 }
             }
         }

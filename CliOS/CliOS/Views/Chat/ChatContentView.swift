@@ -38,7 +38,6 @@ struct ChatContentView: View {
                                 isUser: message.role == .user,
                                 isStreaming: message.isStreaming
                             )
-                            .animation(.easeInOut(duration: 0.25), value: message.content)
                             .animation(.easeInOut(duration: 0.25), value: message.isStreaming)
                             .id(message.id)
                             .offset(y: isNew ? 20 : 0)
@@ -70,16 +69,20 @@ struct ChatContentView: View {
                     }
                     .padding(.horizontal, Theme.paddingM)
                 }
+                .defaultScrollAnchor(.bottom)
                 .onChange(of: messages.count) { _, _ in
-                    guard isNearBottom, let last = messages.last else { return }
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
+                    guard isNearBottom else { return }
+                    // No animation — let the message entrance animation do the visual work
+                    proxy.scrollTo("bottom", anchor: .bottom)
                 }
                 .onChange(of: messages.last?.content) { _, _ in
                     guard isNearBottom,
                           let last = messages.last,
                           last.isStreaming else { return }
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+                .onChange(of: keyboardUp) { _, up in
+                    guard up else { return }
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
@@ -331,7 +334,7 @@ struct ChatBubble: View {
         guard !hasHeading else { return false }
         let totalLength = spans.reduce(0) { $0 + $1.text.count }
         let hasNewlines = spans.contains { $0.text.contains("\n") }
-        return totalLength < 120 && !hasNewlines
+        return totalLength < 50 && !hasNewlines
     }
 
     private func buildAttributedText(_ spans: [InlineSpan]) -> Text {
@@ -369,6 +372,30 @@ struct ChatCardView: View {
 
     var body: some View {
         switch card.type {
+        case .sessionTitle, .notify:
+            EmptyView()
+
+        case .notifyWorkflow:
+            WorkflowCard(
+                workflowName: f("workflow", fallback: "workflow"),
+                agentCount: Int(f("agents", fallback: "6")) ?? 6
+            )
+
+        case .notifySubagent:
+            SubAgentCard(
+                task: f("task"),
+                agentName: f("agent")
+            )
+
+        case .notifyGit:
+            GitCommitCard(
+                gitType: f("type", fallback: "commit"),
+                branch: f("branch"),
+                sourceBranch: f("sourceBranch", fallback: "main"),
+                commits: Int(f("commits")) ?? 1,
+                deployTarget: f("deployTarget")
+            )
+
         case .githubPR:
             GitHubPRCard(
                 number: Int(f("number")) ?? 0,

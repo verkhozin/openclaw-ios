@@ -197,6 +197,13 @@ final class ChatDatabase {
         }
     }
 
+    func updateSessionTitle(sessionKey: String, title: String) {
+        queue.sync {
+            exec("UPDATE sessions SET title = ? WHERE sessionKey = ?",
+                 params: [.text(title), .text(sessionKey)])
+        }
+    }
+
     // MARK: - Messages
 
     func insertMessage(_ msg: CachedMessage) {
@@ -328,6 +335,32 @@ final class ChatDatabase {
     func removeFromOutbox(id: String) {
         queue.sync {
             exec("DELETE FROM outbox WHERE id = ?", params: [.text(id)])
+        }
+    }
+
+    // MARK: - History sync helpers
+
+    /// Delete history-fetched messages (seq=0) for a session, keeping real-time messages intact.
+    func deleteHistoryMessages(sessionKey: String) {
+        queue.sync {
+            exec("DELETE FROM messages WHERE sessionKey = ? AND seq = 0", params: [.text(sessionKey)])
+        }
+    }
+
+    /// Return the set of rawContent strings for all messages in a session (for dedup).
+    func existingContentSet(for sessionKey: String) -> Set<String> {
+        queue.sync {
+            let sql = "SELECT rawContent FROM messages WHERE sessionKey = ?"
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, (sessionKey as NSString).utf8String, -1, nil)
+
+            var result = Set<String>()
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                result.insert(col_text(stmt, 0))
+            }
+            return result
         }
     }
 

@@ -24,8 +24,8 @@ enum CardParser {
         var cards: [ServiceCard] = []
         var cleanText = content
         
-        // Match ```card:type\n...\n```
-        let pattern = "```card:(\\w+(?:\\.\\w+)*)\\n([\\s\\S]*?)```"
+        // Match ```card:type\n...\n``` or single-line ```card:type key: val ...```
+        let pattern = "```card:(\\w+(?:\\.\\w+)*)[\\n ]([\\s\\S]*?)```"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
             return Result(cleanText: content, cards: [])
         }
@@ -66,28 +66,34 @@ enum CardParser {
         )
     }
     
-    /// Parse YAML-like body, split by --- separator
+    /// Parse YAML-like body, split by --- separator.
+    /// Handles both multi-line and single-line (space-separated) formats.
     private static func parseBody(_ body: String) -> (fields: [String: String], actions: [String]) {
         var fields: [String: String] = [:]
         var actions: [String] = []
         var inMeta = false
-        
-        for line in body.components(separatedBy: "\n") {
+
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = trimmedBody.contains("\n")
+            ? trimmedBody.components(separatedBy: "\n")
+            : splitInlineFields(trimmedBody)
+
+        for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            
+
             if trimmed == "---" {
                 inMeta = true
                 continue
             }
-            
+
             guard !trimmed.isEmpty else { continue }
-            
+
             let parts = trimmed.split(separator: ":", maxSplits: 1)
             guard parts.count == 2 else { continue }
-            
+
             let key = parts[0].trimmingCharacters(in: .whitespaces)
             let value = parts[1].trimmingCharacters(in: .whitespaces)
-            
+
             if inMeta && key == "actions" {
                 actions = value.split(separator: ",").map {
                     $0.trimmingCharacters(in: .whitespaces)
@@ -96,8 +102,25 @@ enum CardParser {
                 fields[key] = value
             }
         }
-        
+
         return (fields, actions)
+    }
+
+    /// Split "key: val key2: val2" into ["key: val", "key2: val2"]
+    private static func splitInlineFields(_ text: String) -> [String] {
+        let pattern = "(\\w+):\\s*(.*?)(?=\\s+\\w+:\\s|$)"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return [text]
+        }
+        let nsText = text as NSString
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+        guard !matches.isEmpty else { return [text] }
+        return matches.map { match in
+            let key = nsText.substring(with: match.range(at: 1))
+            let value = nsText.substring(with: match.range(at: 2))
+                .trimmingCharacters(in: .whitespaces)
+            return "\(key): \(value)"
+        }
     }
     
     /// Get actions from a parsed card's fields

@@ -89,13 +89,13 @@ enum GatewayHandshake {
             "minProtocol": AnyCodable(3),
             "maxProtocol": AnyCodable(3),
             "client": AnyCodable([
-                "id": "clios",
+                "id": "openclaw-ios",
                 "version": appVersion,
                 "platform": "ios",
-                "mode": "operator"
+                "mode": "ui"
             ]),
             "role": AnyCodable("operator"),
-            "scopes": AnyCodable(["operator.read", "operator.write"]),
+            "scopes": AnyCodable(["operator.read", "operator.write", "operator.approvals", "operator.pairing", "operator.admin"]),
             "caps": AnyCodable(caps.map { $0.value }),
             "commands": AnyCodable([String]()),
             "permissions": AnyCodable([String: Bool]()),
@@ -123,6 +123,7 @@ enum GatewayEvent {
     static let health = "health"
     static let heartbeat = "heartbeat"
     static let cron = "cron"
+    static let calendar = "calendar"
     static let execApproval = "exec.approval.requested"
     static let shutdown = "shutdown"
 }
@@ -138,6 +139,8 @@ enum GatewayMethod {
     static let cronList = "cron.list"
     static let cronUpdate = "cron.update"
     static let cronRun = "cron.run"
+    static let calendarList = "calendar.list"
+    static let calendarSync = "calendar.sync"
     static let execApprovalResolve = "exec.approval.resolve"
 }
 

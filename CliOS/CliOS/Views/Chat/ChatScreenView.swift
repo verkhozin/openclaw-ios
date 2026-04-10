@@ -3,6 +3,7 @@ import SwiftUI
 struct ChatScreenView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.hideTabBar) private var hideTabBar
 
     private let panelMin: CGFloat = 48
     private let panelMaxFraction: CGFloat = 0.7
@@ -13,13 +14,15 @@ struct ChatScreenView: View {
     @State private var showCommands = false
     @State private var commandsHeight: CGFloat = 0
 
+    private let bottomRadius: CGFloat = 45
+
     var body: some View {
         GeometryReader { geo in
             let bottomInset = geo.safeAreaInsets.bottom
             let panelMax = geo.size.height * panelMaxFraction
             let commandsExtra: CGFloat = showCommands ? commandsHeight : 0
             // When composing, the black panel is just keyboard height — input bar lives in chat area
-            let basePanelHeight = isComposing ? 0 : panelHeight + commandsExtra
+            let basePanelHeight = isComposing ? (keyboardHeight > 0 ? 8 : 0) : panelHeight + commandsExtra
             let panelWithKeyboard = basePanelHeight + keyboardHeight
             let effectiveHeight = min(max(panelWithKeyboard, panelMin), panelMax)
             let chatHeight = geo.size.height - effectiveHeight + geo.safeAreaInsets.top
@@ -34,7 +37,7 @@ struct ChatScreenView: View {
                         .clipShape(
                             RoundedCornerShape(
                                 corners: [.bottomLeft, .bottomRight],
-                                radius: 45
+                                radius: bottomRadius
                             )
                         )
                         .overlay(alignment: .bottom) {
@@ -45,7 +48,7 @@ struct ChatScreenView: View {
                                     showCommands: $showCommands
                                 )
                                 .padding(.horizontal, Theme.paddingM)
-                                .padding(.bottom, 20)
+                                .padding(.bottom, keyboardHeight > 0 ? 8 : 20)
                                 .transition(.blurReplace)
                             }
                         }
@@ -128,7 +131,10 @@ struct ChatScreenView: View {
                 commandsHeight = h + 12 // +12 for spacing
             }
             .background(SwipeBackEnabler())
+            .onAppear { hideTabBar.wrappedValue = true }
+            .onDisappear { hideTabBar.wrappedValue = false }
         }
+        .ignoresSafeArea(.keyboard)
     }
 
     private var statusBarColor: Color {

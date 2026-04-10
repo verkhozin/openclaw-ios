@@ -231,3 +231,43 @@ struct CronEntityProvider: EntityProvider {
         return entities
     }
 }
+
+// MARK: - Calendar Event Entity Provider
+
+/// Indexes calendar events from GatewayService.
+struct CalendarEventEntityProvider: EntityProvider {
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, HH:mm"
+        return f
+    }()
+
+    func fetchEntities() async throws -> [EntityItem] {
+        let events = await GatewayService.shared.calendarEvents
+
+        let entities = events.map { event in
+            let subtitle: String
+            if event.isAllDay {
+                subtitle = "All day · \(event.source.rawValue)"
+            } else {
+                let start = Self.timeFormatter.string(from: event.startDate)
+                let end = Self.timeFormatter.string(from: event.endDate)
+                subtitle = "\(start) – \(end)"
+            }
+
+            return EntityItem(
+                id: "event:\(event.id)",
+                type: .event,
+                name: event.title,
+                path: event.id,
+                subtitle: subtitle,
+                icon: event.isAllDay ? "calendar.circle.fill" : "calendar",
+                updatedAt: Int64(event.startDate.timeIntervalSince1970 * 1000)
+            )
+        }
+
+        logger.info("CalendarEventEntityProvider: indexed \(entities.count) events")
+        return entities
+    }
+}

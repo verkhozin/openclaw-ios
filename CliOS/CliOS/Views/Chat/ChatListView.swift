@@ -8,6 +8,7 @@ struct ChatListView: View {
     @State private var navigateToChat = false
     @State private var knownSessionKeys: Set<String> = []
     @State private var isOnScreen = false
+    @State private var entranceAppeared = false
 
     private static let palettes: [(blobs: [Color], highlights: [Color])] = [
         // Deep ocean + teal spark
@@ -41,19 +42,6 @@ struct ChatListView: View {
             VStack(spacing: 0) {
                 // Fixed: gradient + header
                 sessionsHeader
-                    .background {
-                        ZStack {
-                            Color(hex: "1A1A2E")
-                            FluidGradient(
-                                blobs: currentPalette.blobs,
-                                highlights: currentPalette.highlights,
-                                speed: 0.25,
-                                blur: 0.85
-                            )
-                        }
-                        .ignoresSafeArea(edges: .top)
-                        .onAppear { startPaletteRotation() }
-                    }
 
                 // Fixed: white card with scrollable content inside
                 VStack(spacing: 0) {
@@ -64,30 +52,19 @@ struct ChatListView: View {
                             chatRows
                                 .padding(.top, 12)
                         }
-                        .mask(
-                            VStack(spacing: 0) {
-                                LinearGradient(
-                                    colors: [.clear, .white],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                                .frame(height: 16)
-                                Color.white
-                            }
-                            .clipShape(
-                                UnevenRoundedRectangle(
-                                    topLeadingRadius: 24,
-                                    bottomLeadingRadius: 0,
-                                    bottomTrailingRadius: 0,
-                                    topTrailingRadius: 24,
-                                    style: .continuous
-                                )
-                            )
-                        )
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.bg)
+                .overlay(alignment: .top) {
+                    LinearGradient(
+                        colors: [Theme.bg, Theme.bg.opacity(0)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 20)
+                    .allowsHitTesting(false)
+                }
                 .clipShape(
                     UnevenRoundedRectangle(
                         topLeadingRadius: 24,
@@ -98,7 +75,19 @@ struct ChatListView: View {
                     )
                 )
             }
-            .background(Color(hex: "1A1A2E"))
+            .background {
+                ZStack {
+                    Color(hex: "1A1A2E")
+                    FluidGradient(
+                        blobs: currentPalette.blobs,
+                        highlights: currentPalette.highlights,
+                        speed: 0.25,
+                        blur: 0.85
+                    )
+                }
+                .ignoresSafeArea()
+                .onAppear { startPaletteRotation() }
+            }
             .ignoresSafeArea(edges: .bottom)
             .navigationBarHidden(true)
             .navigationDestination(isPresented: $navigateToChat) {
@@ -109,6 +98,11 @@ struct ChatListView: View {
             .onAppear {
                 isOnScreen = true
                 knownSessionKeys = Set(sessions.map(\.sessionKey))
+                if !entranceAppeared {
+                    withAnimation(.easeOut(duration: 0.5).delay(0.15)) {
+                        entranceAppeared = true
+                    }
+                }
             }
             .onDisappear {
                 isOnScreen = false
@@ -140,56 +134,108 @@ struct ChatListView: View {
                 .transition(.opacity)
             }
 
-            HStack(alignment: .center) {
-                Text("Sessions")
-                    .font(.system(size: 36, weight: .heavy))
-                    .foregroundColor(.white)
-
-                Spacer()
-
-                Button {
-                    startNewChat()
-                } label: {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.white.opacity(0.9))
-                        .padding(10)
-                        .background(.white.opacity(0.15))
-                        .clipShape(Circle())
-                }
-            }
-            .padding(.top, 8)
+            Text("Sessions")
+                .font(.system(size: 36, weight: .heavy))
+                .foregroundColor(.white)
+                .padding(.top, 8)
+                .padding(.horizontal, 20)
+                .opacity(entranceAppeared ? 1 : 0)
+                .offset(y: entranceAppeared ? 0 : 20)
 
             pinnedAgentsRow
                 .padding(.top, 14)
+                .opacity(entranceAppeared ? 1 : 0)
+                .offset(y: entranceAppeared ? 0 : 15)
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 28)
-        .frame(height: isRefreshing ? 210 : 180)
+        .padding(.bottom, 12)
+        .frame(height: isRefreshing ? 194 : 164)
         .animation(.easeInOut(duration: 0.35), value: isRefreshing)
     }
 
-    // MARK: - Pinned Agents
+    // MARK: - Pinned Agents + Shortcuts
+
+    private struct AgentShortcut: Identifiable {
+        let id = UUID()
+        let agentId: String
+        let label: String
+        let needsReply: Bool
+    }
+
+    private var mockShortcuts: [AgentShortcut] {
+        [
+            AgentShortcut(agentId: "deploy-bot", label: "Deploy failed", needsReply: true),
+            AgentShortcut(agentId: "code-reviewer", label: "Approve PR?", needsReply: true),
+            AgentShortcut(agentId: "monitor", label: "All healthy", needsReply: false),
+            AgentShortcut(agentId: "test-runner", label: "Coverage 78%", needsReply: false),
+            AgentShortcut(agentId: "api-bot", label: "Pick strategy", needsReply: true),
+        ]
+    }
 
     private var pinnedAgentsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 16) {
                 // Add button
-                VStack(spacing: 6) {
-                    Circle()
-                        .strokeBorder(Color.white.opacity(0.4), lineWidth: 1.5)
-                        .frame(width: 52, height: 52)
-                        .overlay {
-                            Image(systemName: "plus")
-                                .font(.system(size: 20, weight: .medium))
-                                .foregroundColor(.white.opacity(0.7))
-                        }
-                    Text("Add")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.7))
+                Button {
+                    startNewChat()
+                } label: {
+                    VStack(spacing: 6) {
+                        Circle()
+                            .strokeBorder(Color.white.opacity(0.4), lineWidth: 1.5)
+                            .frame(width: 52, height: 52)
+                            .overlay {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 20, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
+                        Text("Add")
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.7))
+                    }
                 }
 
-                // Agent circles
+                // Pinned first, then needs-reply
+                ForEach(mockShortcuts.sorted { !$0.needsReply && $1.needsReply }) { shortcut in
+                    VStack(spacing: 6) {
+                        ZStack(alignment: .topTrailing) {
+                            BeamAvatar(name: shortcut.agentId, size: 52)
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(
+                                            shortcut.needsReply
+                                                ? Color.orange.opacity(0.8)
+                                                : Color.white.opacity(0.3),
+                                            lineWidth: shortcut.needsReply ? 2 : 1.5
+                                        )
+                                )
+
+                            if shortcut.needsReply {
+                                Circle()
+                                    .fill(Color.orange)
+                                    .frame(width: 10, height: 10)
+                                    .overlay(
+                                        Circle().stroke(Color(hex: "1A1A2E"), lineWidth: 2)
+                                    )
+                                    .offset(x: 1, y: -1)
+                            } else {
+                                Image(systemName: "pin.fill")
+                                    .font(.system(size: 8))
+                                    .foregroundColor(.white.opacity(0.7))
+                                    .padding(3)
+                                    .background(Color.white.opacity(0.2))
+                                    .clipShape(Circle())
+                                    .offset(x: 2, y: -2)
+                            }
+                        }
+
+                        Text(shortcut.label)
+                            .font(.system(size: 11, weight: shortcut.needsReply ? .semibold : .regular))
+                            .foregroundColor(shortcut.needsReply ? .white : .white.opacity(0.7))
+                            .lineLimit(1)
+                    }
+                    .frame(width: 58)
+                }
+
+                // Plain agent circles (no shortcut)
                 ForEach(pinnedAgents, id: \.self) { agentId in
                     VStack(spacing: 6) {
                         BeamAvatar(name: agentId, size: 52)
@@ -205,37 +251,52 @@ struct ChatListView: View {
                     .frame(width: 58)
                 }
             }
+            .padding(.horizontal, 20)
+            .scrollTargetLayout()
         }
+        .mask(
+            HStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .white], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 16)
+                Color.white
+                LinearGradient(colors: [.white, .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 16)
+            }
+        )
     }
 
     // MARK: - Chat Rows
 
+    @State private var sessionToDelete: ChatSession?
+
     private var chatRows: some View {
         LazyVStack(spacing: 0) {
-            ForEach(sessions) { session in
+            ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
                 let isNew = isNewSession(session.sessionKey)
 
-                SwipeToDeleteRow(
-                    onDelete: {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            gateway.sessionStore.deleteSession(key: session.sessionKey)
+                NavigationLink {
+                    ChatScreenView()
+                        .navigationBarHidden(true)
+                        .toolbar(.hidden, for: .tabBar)
+                        .onAppear {
+                            gateway.sessionStore.openSession(key: session.sessionKey)
                         }
-                    }
-                ) {
-                    NavigationLink {
-                        ChatScreenView()
-                            .navigationBarHidden(true)
-                            .toolbar(.hidden, for: .tabBar)
-                            .onAppear {
-                                gateway.sessionStore.openSession(key: session.sessionKey)
-                            }
-                    } label: {
-                        ChatSessionRow(session: session)
-                    }
+                } label: {
+                    ChatSessionRow(session: session)
                 }
-                .offset(y: isNew ? 30 : 0)
-                .opacity(isNew ? 0 : 1)
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.5)
+                        .onEnded { _ in
+                            sessionToDelete = session
+                        }
+                )
+                .offset(y: isNew ? 30 : (entranceAppeared ? 0 : 25))
+                .opacity(isNew ? 0 : (entranceAppeared ? 1 : 0))
                 .scaleEffect(isNew ? 0.95 : 1, anchor: .top)
+                .animation(
+                    .spring(response: 0.5, dampingFraction: 0.82).delay(Double(index) * 0.06),
+                    value: entranceAppeared
+                )
                 .onAppear {
                     guard isNew else { return }
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
@@ -245,6 +306,23 @@ struct ChatListView: View {
             }
         }
         .padding(.horizontal, 16)
+        .confirmationDialog(
+            "Delete session?",
+            isPresented: Binding(
+                get: { sessionToDelete != nil },
+                set: { if !$0 { sessionToDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let session = sessionToDelete {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        gateway.sessionStore.deleteSession(key: session.sessionKey)
+                    }
+                }
+                sessionToDelete = nil
+            }
+        }
     }
 
     // MARK: - Empty State
@@ -439,13 +517,14 @@ struct ChatSessionRow: View {
                         .font(.system(size: 14))
                         .foregroundColor(Theme.textSecondary)
                         .lineLimit(2)
+                        .multilineTextAlignment(.leading)
 
                     Spacer(minLength: 4)
 
                     if session.unreadCount > 0 {
                         Text("\(session.unreadCount)")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.white)
+                            .foregroundColor(Theme.bg)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 2)
                             .background(Theme.accent)
@@ -471,75 +550,6 @@ struct ChatSessionRow: View {
         let f = DateFormatter()
         f.dateFormat = "MMM d"
         return f.string(from: date)
-    }
-}
-
-// MARK: - Swipe to Delete
-
-struct SwipeToDeleteRow<Content: View>: View {
-    let onDelete: () -> Void
-    @ViewBuilder let content: Content
-
-    @State private var offset: CGFloat = 0
-    @GestureState private var dragOffset: CGFloat = 0
-
-    private let deleteThreshold: CGFloat = -80
-    private let snapWidth: CGFloat = -80
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            // Delete background
-            HStack(spacing: 0) {
-                Spacer()
-                Button {
-                    onDelete()
-                } label: {
-                    Image(systemName: "trash.fill")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundColor(.white)
-                        .frame(width: 70)
-                        .frame(maxHeight: .infinity)
-                }
-            }
-            .background(Theme.error)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadiusSmall))
-            .opacity(currentOffset < 0 ? 1 : 0)
-
-            // Foreground content
-            content
-                .background(Theme.bg)
-                .offset(x: currentOffset)
-                .gesture(
-                    DragGesture(minimumDistance: 20)
-                        .updating($dragOffset) { value, state, _ in
-                            let horizontal = value.translation.width
-                            if horizontal < 0 || offset < 0 {
-                                state = horizontal
-                            }
-                        }
-                        .onEnded { value in
-                            let projected = value.predictedEndTranslation.width + offset
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                if projected < deleteThreshold {
-                                    offset = snapWidth
-                                } else {
-                                    offset = 0
-                                }
-                            }
-                        }
-                )
-        }
-        .clipped()
-    }
-
-    private var currentOffset: CGFloat {
-        let total = offset + dragOffset
-        if total > 0 { return 0 }
-        if total < snapWidth {
-            let over = total - snapWidth
-            return snapWidth + over * 0.2
-        }
-        return total
     }
 }
 

@@ -77,7 +77,8 @@ final class NotificationManager: ObservableObject {
         current = notification
 
         if !notification.type.isPersistent {
-            scheduleAutoDismiss(seconds: 4)
+            let delay: Double = notification.type == .connectionRestored ? 2.5 : 4
+            scheduleAutoDismiss(seconds: delay)
         }
     }
 

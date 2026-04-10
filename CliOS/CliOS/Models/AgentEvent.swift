@@ -12,6 +12,14 @@ struct AgentEvent {
         case lifecycleStart
         case lifecycleEnd
         case assistant(text: String, delta: String)
+
+        var logLabel: String {
+            switch self {
+            case .lifecycleStart: return "start"
+            case .lifecycleEnd: return "end"
+            case .assistant: return "stream"
+            }
+        }
     }
 
     /// Try to parse an agent event from a raw JSON dictionary.

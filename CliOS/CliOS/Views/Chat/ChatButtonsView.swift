@@ -7,7 +7,7 @@ struct ChatButtonsView: View {
     @Binding var showCommands: Bool
     @State private var messageText = ""
     @State private var iconRotation: Double = 0
-    @FocusState private var inputFocused: Bool
+    @State private var inputFocused = false
 
     private let btnHeight: CGFloat = 48
     private let transition = Animation.easeInOut(duration: 0.5)
@@ -48,16 +48,14 @@ struct ChatButtonsView: View {
             // MARK: - Middle (Slash + Search + Gap <-> TextField)
 
             if isComposing {
-                TextField("Message", text: $messageText, axis: .vertical)
-                    .font(.system(size: 16))
-                    .foregroundStyle(.white)
-                    .tint(.white)
-                    .lineLimit(1...6)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 22))
-                    .focused($inputFocused)
-                    .transition(.blurReplace)
+                MentionTextView(
+                    text: $messageText,
+                    isFocused: $inputFocused
+                )
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 22))
+                .transition(.blurReplace)
             } else {
                 HStack(spacing: 8) {
                     // Slash / Commands button
@@ -225,7 +223,9 @@ struct ChatInputOverlay: View {
     @Binding var isComposing: Bool
     @Binding var showCommands: Bool
     @State private var messageText = ""
-    @FocusState private var inputFocused: Bool
+    @State private var inputFocused = false
+    @StateObject private var mentionController = MentionTextController()
+    @State private var mockMentionIndex = 0
 
     private let btnHeight: CGFloat = 48
     private let transition = Animation.easeInOut(duration: 0.5)
@@ -234,8 +234,18 @@ struct ChatInputOverlay: View {
         let hasText = !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         HStack(alignment: .bottom, spacing: 8) {
-            // Paperclip
-            Button(action: {}) {
+            // Paperclip — mock mention insert
+            Button(action: {
+                let mocks: [(String, String, UIColor)] = [
+                    ("readme.md", "doc.fill", .systemOrange),
+                    ("Design Chat", "bubble.left.fill", .systemBlue),
+                    ("Fix navbar #42", "checkmark.circle.fill", .systemGreen),
+                    ("CodeAgent", "cpu.fill", .systemPurple),
+                ]
+                let mock = mocks[mockMentionIndex % mocks.count]
+                mentionController.insertMention(name: mock.0, icon: mock.1, color: mock.2)
+                mockMentionIndex += 1
+            }) {
                 Image(systemName: "paperclip")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Color(.label))
@@ -243,19 +253,20 @@ struct ChatInputOverlay: View {
             }
             .buttonStyle(BounceButtonStyle())
             .frame(width: btnHeight, height: btnHeight)
-            .background(Color(.tertiarySystemFill), in: Circle())
+            .modifier(GlassCircleBackground())
 
-            // TextField
-            TextField("Message", text: $messageText, axis: .vertical)
-                .font(.system(size: 16))
-                .foregroundStyle(.primary)
-                .tint(.primary)
-                .lineLimit(1...6)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .frame(minHeight: btnHeight)
-                .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 22))
-                .focused($inputFocused)
+            // MentionTextView
+            MentionTextView(
+                text: $messageText,
+                isFocused: $inputFocused,
+                textColor: UIColor.label,
+                tintColor: UIColor.label,
+                controller: mentionController
+            )
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(minHeight: btnHeight)
+            .modifier(GlassRoundedBackground(cornerRadius: 22))
 
             // Send / Close
             Button(action: {
@@ -276,13 +287,51 @@ struct ChatInputOverlay: View {
             }
             .buttonStyle(BounceButtonStyle())
             .frame(width: btnHeight, height: btnHeight)
-            .background(hasText ? Color(.label) : Color(.tertiarySystemFill), in: Circle())
+            .modifier(SendButtonBackground(hasText: hasText))
             .animation(transition, value: hasText)
         }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 inputFocused = true
             }
+        }
+    }
+}
+
+// MARK: - Glass Background Modifiers
+
+private struct GlassCircleBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: .circle)
+        } else {
+            content.background(.ultraThinMaterial, in: Circle())
+        }
+    }
+}
+
+private struct SendButtonBackground: ViewModifier {
+    let hasText: Bool
+
+    func body(content: Content) -> some View {
+        if hasText {
+            content.background(Color(.label), in: Circle())
+        } else if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: .circle)
+        } else {
+            content.background(.ultraThinMaterial, in: Circle())
+        }
+    }
+}
+
+private struct GlassRoundedBackground: ViewModifier {
+    var cornerRadius: CGFloat = 22
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
+        } else {
+            content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
         }
     }
 }

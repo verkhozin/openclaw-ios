@@ -69,8 +69,8 @@ final class SessionStore: ObservableObject {
             streamingMessage = nil
         }
 
-        // Rebuild seenSeqs from loaded messages to prevent dupes on reconnect
-        seenSeqs = Set(cached.compactMap { $0.seq > 0 ? $0.seq : nil })
+        // Rebuild seenSeqs for this session from loaded messages to prevent dupes on reconnect
+        seenSeqs[key] = Set(cached.compactMap { $0.seq > 0 ? $0.seq : nil })
 
         // Mark as read
         if let lastSeq = cached.last?.seq {
@@ -79,24 +79,39 @@ final class SessionStore: ObservableObject {
 
         loadSessions()
         logger.info("Opened session \(key, privacy: .public) with \(cached.count) cached messages (same=\(isSameSession))")
+
+        // If cache is empty, fetch history from gateway
+        if cached.isEmpty {
+            Task {
+                await GatewayService.shared.fetchHistory(sessionKey: key)
+            }
+        }
     }
 
     // MARK: - Receive messages from gateway
 
-    /// Track seen seq numbers to prevent duplicates from reconnects
-    private var seenSeqs: Set<Int64> = []
+    /// Track seen seq numbers per session to prevent duplicates from reconnects
+    private var seenSeqs: [String: Set<Int64>] = [:]
+
+    /// Track notify cards already fired from streaming deltas — prevent double-fire on final
+    private var firedNotifyCards: Set<String> = []
 
     /// Called when a chat delta/final event arrives.
     func handleChatEvent(sessionKey: String, state: String, text: String, seq: Int64, timestamp: Int64, runId: String?) {
+        let isActive = sessionKey == currentSessionKey
+        if state == "final" {
+            logger.info("handleChatEvent FINAL: event=\(sessionKey, privacy: .public) current=\(self.currentSessionKey, privacy: .public) active=\(isActive) seq=\(seq) textLen=\(text.count)")
+        }
+
         ensureSession(key: sessionKey)
 
         if state == "final" {
             // Dedup: skip if we already processed this seq for this session
-            if seq > 0 && seenSeqs.contains(seq) {
-                logger.info("Skipping duplicate final seq=\(seq)")
+            if seq > 0 && (seenSeqs[sessionKey]?.contains(seq) == true) {
+                logger.info("Skipping duplicate final seq=\(seq) session=\(sessionKey)")
                 return
             }
-            if seq > 0 { seenSeqs.insert(seq) }
+            if seq > 0 { seenSeqs[sessionKey, default: []].insert(seq) }
 
             // Persist to SQLite (INSERT OR REPLACE handles DB-level dedup by id)
             let parsed = ContentParser.parse(text)
@@ -117,6 +132,13 @@ final class SessionStore: ObservableObject {
                 runId: runId
             )
             db.insertMessage(cached)
+
+            // Extract session title from card if present
+            let cardResult = CardParser.parse(text)
+            if let titleCard = cardResult.cards.first(where: { $0.type == .sessionTitle }),
+               let title = titleCard.fields["title"], !title.isEmpty {
+                updateTitle(sessionKey: sessionKey, title: title)
+            }
 
             let preview = Self.generatePreview(from: text)
             db.updateSessionLastMessage(sessionKey: sessionKey, timestamp: timestamp, preview: preview, seq: seq)
@@ -180,18 +202,29 @@ final class SessionStore: ObservableObject {
                     currentMessages.append(msg)
                 }
             }
+
+            // Fire notify cards from deltas immediately (don't wait for final)
+            postNotifyCards(from: text, sessionKey: sessionKey)
         }
+    }
+
+    // MARK: - Session title
+
+    func updateTitle(sessionKey: String, title: String) {
+        db.updateSessionTitle(sessionKey: sessionKey, title: title)
+        if let idx = sessions.firstIndex(where: { $0.sessionKey == sessionKey }) {
+            sessions[idx].title = title
+        }
+        logger.info("Session title updated: \(sessionKey, privacy: .public) → \(title)")
     }
 
     // MARK: - Typing indicator
 
     /// Insert an empty streaming placeholder so the UI shows a typing indicator.
+    /// Only call this for the currently active session.
     func beginAgentResponse(sessionKey: String) {
-        // If the session isn't open yet, open it first so messages land in the right place
-        if currentSessionKey != sessionKey {
-            logger.info("beginAgentResponse: auto-opening session \(sessionKey, privacy: .public)")
-            openSession(key: sessionKey)
-        }
+        firedNotifyCards.removeAll()
+        guard sessionKey == currentSessionKey else { return }
         guard streamingMessage == nil else { return }
         let msg = Message(role: .agent, content: "", isStreaming: true)
         streamingMessage = msg
@@ -232,6 +265,13 @@ final class SessionStore: ObservableObject {
         db.insertMessage(cached)
         let sendPreview = Self.generatePreview(from: text)
         db.updateSessionLastMessage(sessionKey: sessionKey, timestamp: now, preview: sendPreview, seq: cached.seq)
+
+        // Set session title from first user message (fallback until agent names it)
+        if let session = sessions.first(where: { $0.sessionKey == sessionKey }),
+           session.title == "New Chat" {
+            let truncated = String(text.prefix(40)) + (text.count > 40 ? "..." : "")
+            updateTitle(sessionKey: sessionKey, title: truncated)
+        }
 
         // Add to UI immediately
         if sessionKey == currentSessionKey {
@@ -306,6 +346,18 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    // MARK: - Demo mode
+
+    func clearSessionsForDemo() {
+        sessions = []
+        currentSessionKey = ""
+        currentMessages = []
+        streamingMessage = nil
+        seenSeqs = [:]
+        firedNotifyCards = []
+        logger.info("Sessions cleared from UI for demo (DB untouched)")
+    }
+
     // MARK: - Cleanup
 
     func cleanupStale() {
@@ -315,10 +367,26 @@ final class SessionStore: ObservableObject {
 
     // MARK: - Notifications
 
-    /// Parse notify cards from message text and post as in-app notifications.
+    /// Parse notify cards from message text and post as in-app notification banners.
+    /// Cards themselves are not rendered in the chat — only the banner is shown.
+    /// Deduplicates by card type + key fields so streaming deltas don't re-fire.
     private func postNotifyCards(from text: String, sessionKey: String) {
         let result = CardParser.parse(text)
         for card in result.cards {
+            // Dedup key: type + distinguishing fields
+            let dedupKey: String
+            switch card.type {
+            case .notify:           dedupKey = "notify:\(card.fields["title"] ?? "")"
+            case .notifyGit:        dedupKey = "git:\(card.fields["branch"] ?? "")"
+            case .notifyWorkflow:   dedupKey = "workflow:\(card.fields["workflow"] ?? "")"
+            case .notifySubagent:   dedupKey = "subagent:\(card.fields["task"] ?? "")"
+            default:                dedupKey = ""
+            }
+            if !dedupKey.isEmpty {
+                guard !firedNotifyCards.contains(dedupKey) else { continue }
+                firedNotifyCards.insert(dedupKey)
+            }
+
             switch card.type {
             case .notify:
                 let kind = card.fields["kind"] ?? "system"
@@ -380,6 +448,171 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    // MARK: - Gateway history sync
+
+    /// Ingest message history returned by `chat.history` into SQLite and refresh UI.
+    ///
+    /// Strategy:
+    /// 1. Clear old history-fetched messages (seq=0) — these are stale snapshots
+    /// 2. Build content fingerprint set from remaining real-time messages to avoid dupes
+    /// 3. Insert new history messages with seq=0 (won't interfere with real-time seq dedup)
+    func ingestHistory(sessionKey: String, rawMessages: [[String: Any]]) {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+
+        // Step 1: clear previous history-fetched messages, keep real-time ones
+        db.deleteHistoryMessages(sessionKey: sessionKey)
+
+        // Step 2: content dedup — skip messages that already exist from real-time events
+        let existingContent = db.existingContentSet(for: sessionKey)
+
+        var ingestedCount = 0
+
+        for (index, msg) in rawMessages.enumerated() {
+            let role = msg["role"] as? String ?? "assistant"
+
+            // Extract text: either a plain string or content array
+            let text: String
+            if let s = msg["content"] as? String {
+                text = s
+            } else if let arr = msg["content"] as? [[String: Any]] {
+                text = arr.compactMap { $0["text"] as? String }.joined()
+            } else {
+                continue
+            }
+            guard !text.isEmpty else { continue }
+
+            // Skip if identical content already stored from a real-time event
+            if existingContent.contains(text) { continue }
+
+            let parsed = ContentParser.parse(text)
+            let msgId = (msg["id"] as? String) ?? "\(sessionKey)-hist-\(index)"
+            let rawTs = (msg["timestamp"] as? Int64) ?? Int64(msg["timestamp"] as? Double ?? 0)
+            let timestamp = rawTs > 0 ? rawTs : (now - Int64((rawMessages.count - index) * 1000))
+
+            let cached = CachedMessage(
+                id: msgId,
+                sessionKey: sessionKey,
+                role: role,
+                rawContent: text,
+                parsedBlocksJSON: parsed.parsedBlocksJSON,
+                tagsJSON: parsed.tagsJSON,
+                hasCode: parsed.hasCode,
+                hasCard: parsed.hasCard,
+                cardType: parsed.cardType,
+                timestamp: timestamp,
+                seq: 0,         // seq=0 = history-fetched, won't clash with real-time seq dedup
+                runId: nil
+            )
+            db.insertMessage(cached)
+            ingestedCount += 1
+        }
+
+        // Update session metadata
+        if let lastMsg = rawMessages.last {
+            let lastText: String
+            if let s = lastMsg["content"] as? String { lastText = s }
+            else if let arr = lastMsg["content"] as? [[String: Any]] {
+                lastText = arr.compactMap { $0["text"] as? String }.joined()
+            } else { lastText = "" }
+            let preview = Self.generatePreview(from: lastText)
+            let ts = (lastMsg["timestamp"] as? Int64) ?? now
+            db.updateSessionLastMessage(sessionKey: sessionKey, timestamp: ts, preview: preview, seq: 0)
+        }
+
+        // Refresh UI if viewing this session
+        if sessionKey == currentSessionKey {
+            let cached = db.messages(for: sessionKey, limit: 50)
+            currentMessages = cached.map { $0.toMessage() }
+            seenSeqs[sessionKey] = Set(cached.compactMap { $0.seq > 0 ? $0.seq : nil })
+        }
+
+        loadSessions()
+        logger.info("Ingested \(ingestedCount) history messages for \(sessionKey, privacy: .public)")
+    }
+
+    /// Merge server session list into local SQLite cache.
+    func mergeSessions(from serverSessions: [[String: Any]]) {
+        for entry in serverSessions {
+            guard let rawKey = entry["key"] as? String else { continue }
+            if rawKey == "global" || rawKey == "unknown" { continue }
+
+            // Resolve gateway key (agent:scout:uuid) to local key if it exists
+            let key = resolveSessionKey(rawKey)
+
+            let serverTitle = (entry["derivedTitle"] as? String)
+                ?? (entry["displayName"] as? String)
+            let updatedAt = (entry["updatedAt"] as? Int64)
+                ?? Int64(entry["updatedAt"] as? Double ?? 0)
+            let rawPreview = (entry["lastMessagePreview"] as? String) ?? ""
+            let preview = rawPreview.isEmpty ? "" : Self.generatePreview(from: rawPreview)
+            let model = (entry["model"] as? String) ?? ""
+
+            let existing = db.session(for: key)
+
+            // Title priority: existing non-default local title > clean server title > readableTitle
+            // Local title wins because it's set by session.title card or first user message,
+            // while server derivedTitle may be garbage from system-event prompt.
+            let defaultTitles: Set<String> = ["New Chat", "Main"]
+            let title: String = {
+                if let et = existing?.title, !et.isEmpty, !defaultTitles.contains(et) { return et }
+                if let st = serverTitle, !st.isEmpty, !st.contains("```"), !st.contains("sender(") { return st }
+                return Self.readableTitle(from: key)
+            }()
+
+            // Only update if server is newer or session doesn't exist locally
+            if existing == nil || (existing!.lastMessageAt < updatedAt && updatedAt > 0) {
+                let session = ChatSession(
+                    sessionKey: key,
+                    title: title,
+                    lastMessageAt: updatedAt > 0 ? updatedAt : (existing?.lastMessageAt ?? 0),
+                    lastMessagePreview: preview.isEmpty ? (existing?.lastMessagePreview ?? "") : preview,
+                    unreadCount: existing?.unreadCount ?? 0,
+                    agentId: existing?.agentId ?? "",
+                    model: model.isEmpty ? (existing?.model ?? "") : model,
+                    cachedUntilSeq: existing?.cachedUntilSeq ?? 0
+                )
+                db.upsertSession(session)
+            }
+        }
+        loadSessions()
+        logger.info("Merged \(serverSessions.count) sessions from gateway")
+    }
+
+    // MARK: - Session key resolution
+
+    /// Resolve a gateway session key to a local session key.
+    ///
+    /// The gateway wraps session keys as `agent:<name>:<uuid>`, e.g.
+    /// `agent:scout:88e7a5f6-11f2-4e08-a4e6-f488b6f92386`.
+    /// The app creates sessions with plain UUID keys like `88E7A5F6-...`.
+    /// This method maps the gateway key back to the local key so events
+    /// route to the correct session.
+    func resolveSessionKey(_ key: String) -> String {
+        // Exact match — already known
+        if key == currentSessionKey { return key }
+        if sessions.contains(where: { $0.sessionKey == key }) { return key }
+
+        // Extract UUID suffix from agent:*:uuid
+        let parts = key.split(separator: ":", maxSplits: 2)
+        guard parts.count == 3, parts[0] == "agent" else { return key }
+        let uuidPart = String(parts[2])
+
+        // Match against current session (case-insensitive)
+        if !currentSessionKey.isEmpty &&
+            currentSessionKey.caseInsensitiveCompare(uuidPart) == .orderedSame {
+            return currentSessionKey
+        }
+
+        // Match against any known session
+        if let match = sessions.first(where: {
+            $0.sessionKey.caseInsensitiveCompare(uuidPart) == .orderedSame
+        }) {
+            return match.sessionKey
+        }
+
+        return key
+    }
+
     // MARK: - Helpers
 
     /// Generate a human-readable preview from message text.
@@ -391,10 +624,12 @@ final class SessionStore: ObservableObject {
         for block in blocks {
             switch block {
             case .text(_, let spans):
-                let plainText = spans.map(\.text).joined()
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !plainText.isEmpty {
-                    parts.append(plainText)
+                let raw = spans.map(\.text).joined()
+                let collapsed = raw.components(separatedBy: .whitespacesAndNewlines)
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+                if !collapsed.isEmpty {
+                    parts.append(collapsed)
                 }
             case .code(_, let language, _):
                 if !language.isEmpty {
@@ -411,7 +646,20 @@ final class SessionStore: ObservableObject {
         }
 
         let joined = parts.joined(separator: " ")
-        if joined.isEmpty { return String(text.prefix(80)) }
+        if joined.isEmpty {
+            // Parser may fail on single-line or truncated code fences — detect them manually
+            if text.contains("```") {
+                let afterFence = text.components(separatedBy: "```").dropFirst().first ?? ""
+                let lang = afterFence.components(separatedBy: .whitespacesAndNewlines).first ?? ""
+                if lang.hasPrefix("card:") {
+                    // card:notify.git → "Notification", card:github.pr → "Pull Request"
+                    let cardType = ServiceCard.CardType(rawValue: String(lang.dropFirst(5)))
+                    return cardPreviewLabel(for: ServiceCard(type: cardType ?? .unknown, fields: [:]))
+                }
+                return lang.isEmpty ? "[code]" : "[\(lang) code]"
+            }
+            return String(text.prefix(80))
+        }
         return String(joined.prefix(100))
     }
 
@@ -431,6 +679,10 @@ final class SessionStore: ObservableObject {
         case .todo:
             let title = card.fields["title"] ?? ""
             return title.isEmpty ? "Todo" : title
+        case .notify, .notifyGit, .notifyWorkflow, .notifySubagent:
+            return "Notification"
+        case .sessionTitle:
+            return card.fields["title"] ?? ""
         default:
             return card.type.rawValue
         }

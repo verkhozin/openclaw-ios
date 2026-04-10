@@ -22,50 +22,73 @@ private let mockEntities: [EntityItem] = [
     EntityItem(id: "cron:backup", type: .cron, name: "Daily backup", path: "backup", subtitle: "0 3 * * *", icon: "clock.fill"),
     EntityItem(id: "cron:health", type: .cron, name: "Health check", path: "health", subtitle: "*/5 * * * *", icon: "clock.fill"),
     // Branches
-    EntityItem(id: "branch:feat/search", type: .branch, name: "feat/search", path: "feat/search", subtitle: "3 commits ahead", icon: "arrow.triangle.branch"),
-    EntityItem(id: "branch:main", type: .branch, name: "main", path: "main", subtitle: "up to date", icon: "arrow.triangle.branch"),
+    EntityItem(id: "branch:feat/search", type: .branch, name: "feat/search", path: "feat/search", subtitle: "3 commits ahead", icon: "git-branch"),
+    EntityItem(id: "branch:main", type: .branch, name: "main", path: "main", subtitle: "up to date", icon: "git-branch"),
 ]
 
 // MARK: - Mock View
 
 struct EntitySearchMockView: View {
+    @EnvironmentObject private var gateway: GatewayService
+
     @State private var query = ""
     @State private var selectedType: EntityType? = nil
+    @State private var results: [EntityItem] = []
+    @State private var navigateToChat = false
+    @State private var showNewTask = false
+    @State private var taskVM = TaskTrackerViewModel()
     @FocusState private var focused: Bool
 
-    private var filtered: [EntityItem] {
-        var items = mockEntities
-        if let type = selectedType {
-            items = items.filter { $0.type == type }
-        }
-        if !query.isEmpty {
-            let q = query.lowercased()
-            items = items.filter {
-                $0.name.lowercased().contains(q) ||
-                $0.subtitle.lowercased().contains(q)
-            }
-        }
-        return items
+    private var useMock: Bool {
+        EntityIndex.shared.totalCount() == 0
     }
 
-    private var groupedResults: [(EntityType, [EntityItem])] {
-        let dict = Dictionary(grouping: filtered, by: \.type)
-        return EntityType.allCases.compactMap { type in
-            guard let items = dict[type], !items.isEmpty else { return nil }
-            return (type, items)
+    private func runSearch() {
+        if useMock {
+            var items = mockEntities
+            if let type = selectedType {
+                items = items.filter { $0.type == type }
+            }
+            if !query.isEmpty {
+                let q = query.lowercased()
+                items = items.filter {
+                    $0.name.lowercased().contains(q) ||
+                    $0.subtitle.lowercased().contains(q)
+                }
+            }
+            results = items
+        } else {
+            let types: [EntityType]? = selectedType.map { [$0] }
+            results = EntityIndex.shared.search(query: query, types: types, limit: 40)
         }
     }
+
 
     var body: some View {
-        VStack(spacing: 0) {
-            searchField
-            filterBar
-            Divider().overlay(.white.opacity(0.08))
-            resultsList
+        NavigationStack {
+            VStack(spacing: 0) {
+                searchField
+                filterBar
+                Divider().overlay(.white.opacity(0.08))
+                resultsList
+            }
+            .background(.ultraThinMaterial)
+            .navigationBarHidden(true)
+            .navigationDestination(isPresented: $navigateToChat) {
+                ChatScreenView()
+                    .navigationBarHidden(true)
+            }
         }
-        .background(.ultraThinMaterial)
         .preferredColorScheme(.dark)
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            runSearch()
+        }
+        .onChange(of: query) { runSearch() }
+        .onChange(of: selectedType) { runSearch() }
+        .sheet(isPresented: $showNewTask) {
+            NewTaskSheet(vm: taskVM, initialTitle: query.trimmingCharacters(in: .whitespaces))
+        }
     }
 
     // MARK: - Search field
@@ -137,50 +160,105 @@ struct EntitySearchMockView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Results list
+    // MARK: - Quick actions
 
-    private var resultsList: some View {
-        ScrollView {
-            if filtered.isEmpty {
-                emptyState
+    private func actionRow(icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+
+                Text(label)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+
+                Spacer()
+
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textMuted)
+            }
+            .padding(.horizontal, Theme.paddingM)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func startChat() {
+        let text = query.trimmingCharacters(in: .whitespaces)
+        let key = UUID().uuidString
+        gateway.sessionStore.ensureSession(key: key)
+        gateway.sessionStore.openSession(key: key)
+        if !text.isEmpty {
+            gateway.sendMessage(text)
+        }
+        navigateToChat = true
+    }
+
+    private func startTask() {
+        Task { await taskVM.loadIndex() }
+        showNewTask = true
+    }
+
+    private var quickActions: some View {
+        VStack(spacing: 0) {
+            if query.isEmpty {
+                actionRow(icon: "bubble.left", label: "New Chat") {
+                    startChat()
+                }
+                actionRow(icon: "checklist", label: "New Task") {
+                    startTask()
+                }
             } else {
-                LazyVStack(spacing: 0, pinnedViews: .sectionHeaders) {
-                    ForEach(groupedResults, id: \.0) { type, items in
-                        Section {
-                            ForEach(items) { item in
-                                entityRow(item)
-                            }
-                        } header: {
-                            sectionHeader(type)
-                        }
-                    }
+                actionRow(icon: "bubble.left", label: "Chat \"\(query)\"") {
+                    startChat()
+                }
+                actionRow(icon: "checklist", label: "Task \"\(query)\"") {
+                    startTask()
                 }
             }
         }
     }
 
-    private func sectionHeader(_ type: EntityType) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: type.icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(type.tint)
-            Text(type.label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.textMuted)
-            Spacer()
+    // MARK: - Results list
+
+    private var resultsList: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                quickActions
+
+                if !results.isEmpty {
+                    ForEach(results) { item in
+                        entityRow(item)
+                    }
+                } else if !query.isEmpty {
+                    emptyState
+                }
+            }
         }
-        .padding(.horizontal, Theme.paddingM)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
+    }
+
+    @ViewBuilder
+    private func entityIcon(_ item: EntityItem) -> some View {
+        if item.type == .branch {
+            Image(item.icon)
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(item.type.tint)
+        } else {
+            Image(systemName: item.icon)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(item.type.tint)
+        }
     }
 
     private func entityRow(_ item: EntityItem) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: item.icon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(item.type.tint)
-                .frame(width: 30, height: 30)
-                .background(item.type.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+            entityIcon(item)
+                .frame(width: 20, height: 20)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
@@ -205,6 +283,9 @@ struct EntitySearchMockView: View {
         .padding(.horizontal, Theme.paddingM)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
+        .onTapGesture {
+            EntityIndex.shared.recordUsage(id: item.id)
+        }
     }
 
     private var emptyState: some View {
@@ -223,4 +304,5 @@ struct EntitySearchMockView: View {
 
 #Preview {
     EntitySearchMockView()
+        .environmentObject(GatewayService.shared)
 }

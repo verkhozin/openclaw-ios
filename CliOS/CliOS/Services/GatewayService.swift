@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Network
 import os.log
 
 private let logger = Logger(subsystem: "com.clios.app", category: "GatewayService")
@@ -28,9 +29,9 @@ class GatewayService: ObservableObject {
     @Published var connectionError: String?
     @Published var connectionState: ConnectionState = .disconnected
     @Published var status: GatewayStatus = GatewayStatus()
-    @Published var messages: [Message] = []
     @Published var tasks: [AgentTask] = []
     @Published var cronJobs: [CronJob] = []
+    @Published var calendarEvents: [CalendarEvent] = []
     @Published var connectionLog: [String] = []
 
     /// Discrete connection events — subscribe for notification triggers.
@@ -48,19 +49,112 @@ class GatewayService: ObservableObject {
     private var pingTimer: Timer?
     private var reconnectAttempt: Int = 0
     private let maxReconnectAttempts = 5
+    /// Incremented on every connect() — stale callbacks from old sockets check this.
+    nonisolated(unsafe) private var connectionGeneration: Int = 0
+
+    // Network reachability — detects wifi/cellular loss instantly
+    private let networkMonitor = NWPathMonitor()
+    private var networkWasUnsatisfied = false
 
     /// Pending request continuations keyed by request ID.
     private var pendingRequests: [String: CheckedContinuation<[String: Any], any Error>] = [:]
 
+    /// Sessions that have already received the system-event (card capability prompt).
+    private var sentSystemEventSessions: Set<String> = []
+
+    private var connectionEventSub: AnyCancellable?
+    private var sessionStoreSub: AnyCancellable?
+
     private init() {
         logger.info("GatewayService init")
+        // Forward SessionStore changes so views observing GatewayService re-render
+        sessionStoreSub = sessionStore.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         loadPairing()
+        observeConnectionEvents()
+        startNetworkMonitor()
         if isPaired {
             logger.info("Restored pairing from Keychain — url=\(self.gatewayURL?.absoluteString ?? "nil", privacy: .public)")
             log("Restored pairing from Keychain")
             connect()
         } else {
             logger.info("No saved pairing found")
+        }
+    }
+
+    // MARK: - Network reachability
+
+    private func startNetworkMonitor() {
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                guard let self else { return }
+                if path.status == .unsatisfied || path.status == .requiresConnection {
+                    // Network went down
+                    if self.status.isConnected {
+                        logger.warning("Network path unsatisfied — connection will drop")
+                        self.log("Network lost — disconnecting")
+                        self.status.isConnected = false
+                        self.stopPingTimer()
+                        self.networkWasUnsatisfied = true
+                        self.scheduleReconnect(reason: "network lost")
+                    }
+                } else if path.status == .satisfied && self.networkWasUnsatisfied {
+                    // Network came back — reconnect immediately if paired
+                    self.networkWasUnsatisfied = false
+                    if self.isPaired && !self.status.isConnected && !self.isVerifyingConnection {
+                        logger.info("Network restored — reconnecting immediately")
+                        self.log("Network restored — reconnecting")
+                        self.connect()
+                    }
+                }
+            }
+        }
+        networkMonitor.start(queue: DispatchQueue(label: "com.clios.networkMonitor"))
+    }
+
+    // MARK: - Connection → Notification bridge
+
+    /// True only after a disconnect has been shown — gates "connected" notification.
+    private var hadDisconnect = false
+
+    private func observeConnectionEvents() {
+        connectionEventSub = connectionEvents.sink { [weak self] event in
+            guard let self, self.isPaired else { return }
+
+            switch event.kind {
+            case .disconnected:
+                hadDisconnect = true
+                NotificationManager.shared.post(AppNotification(
+                    type: .connectionLost,
+                    style: .island,
+                    title: "Gateway disconnected",
+                    subtitle: event.reason
+                ))
+
+            case .reconnecting:
+                break
+
+            case .connected:
+                // Only show if recovering from a prior disconnect
+                guard hadDisconnect else { return }
+                hadDisconnect = false
+                let subtitle = event.latencyMs.map { "\($0)ms" }
+                NotificationManager.shared.post(AppNotification(
+                    type: .connectionRestored,
+                    style: .island,
+                    title: "Connected",
+                    subtitle: subtitle
+                ))
+
+            case .gaveUp:
+                NotificationManager.shared.post(AppNotification(
+                    type: .connectionLost,
+                    style: .island,
+                    title: "Connection failed",
+                    subtitle: "Could not reconnect after \(event.attempt) attempts"
+                ))
+            }
         }
     }
 
@@ -106,6 +200,7 @@ class GatewayService: ObservableObject {
 
         disconnect()
         reconnectAttempt = 0
+        connectionGeneration += 1
         connectionState = .connecting
 
         logger.info("Opening WebSocket to \(url.absoluteString, privacy: .public)")
@@ -141,6 +236,7 @@ class GatewayService: ObservableObject {
         webSocket = nil
         session = nil
         status.isConnected = false
+        sentSystemEventSessions.removeAll()
         if connectionState.isConnected {
             connectionState = .disconnected
         }
@@ -176,7 +272,7 @@ class GatewayService: ObservableObject {
                 ] as [String: Any],
                 "role": "operator",
                 "scopes": ["operator.read", "operator.write", "operator.approvals", "operator.pairing", "operator.admin"],
-                "caps": ["cards.v1"],
+                "caps": ["cards.v1", "skill"],
                 "commands": [] as [String],
                 "permissions": [:] as [String: Any],
                 "auth": [
@@ -271,8 +367,8 @@ class GatewayService: ObservableObject {
 
     private func startPingTimer() {
         stopPingTimer()
-        logger.debug("Starting ping timer (every 30s)")
-        pingTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        logger.debug("Starting ping timer (every 10s)")
+        pingTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.sendProtocolPing()
             }
@@ -284,19 +380,38 @@ class GatewayService: ObservableObject {
         pingTimer = nil
     }
 
+    private var pingTimeoutTask: Task<Void, Never>?
+
     private func sendProtocolPing() {
         guard let ws = webSocket else { return }
+        let gen = connectionGeneration
         let sendTime = ContinuousClock.now
+        // Timeout: if pong doesn't arrive in 5s, treat as dead
+        pingTimeoutTask?.cancel()
+        pingTimeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled, let self,
+                  gen == self.connectionGeneration,
+                  self.status.isConnected else { return }
+            logger.warning("Ping pong timeout (5s) — connection dead")
+            self.log("Ping timeout — no pong in 5s")
+            self.status.isConnected = false
+            self.stopPingTimer()
+            self.scheduleReconnect(reason: "ping timeout")
+        }
+
         ws.sendPing { [weak self] error in
+            guard gen == self?.connectionGeneration else { return }
             let elapsed = ContinuousClock.now - sendTime
             let ms = Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, gen == self.connectionGeneration else { return }
+                self.pingTimeoutTask?.cancel()
                 if let error {
                     logger.warning("Protocol ping failed: \(error.localizedDescription, privacy: .public)")
                     self.log("Keepalive ping failed: \(error.localizedDescription)")
                     self.status.isConnected = false
-                    self.scheduleReconnect(reason: "ping timeout")
+                    self.scheduleReconnect(reason: "ping failed")
                 } else {
                     logger.debug("Protocol ping OK — \(ms)ms")
                     self.status.latencyMs = ms
@@ -313,6 +428,7 @@ class GatewayService: ObservableObject {
             return
         }
 
+        let gen = connectionGeneration
         ws.receive { [weak self] result in
             guard let self else { return }
 
@@ -345,6 +461,8 @@ class GatewayService: ObservableObject {
                 self.receiveLoop()
 
             case .failure(let error):
+                // Ignore errors from old (cancelled) sockets
+                guard gen == self.connectionGeneration else { return }
                 let nsError = error as NSError
                 logger.error("WebSocket receive error: \(error.localizedDescription, privacy: .public) (code: \(nsError.code))")
                 Task { @MainActor in
@@ -485,19 +603,26 @@ class GatewayService: ObservableObject {
             let state = src["state"] as? String ?? ""
             // Use sessionKey from payload; fallback to current open session, then mainSessionKey
             let rawSessionKey = src["sessionKey"] as? String ?? ""
-            let sessionKey = rawSessionKey.isEmpty
+            let resolvedKey = rawSessionKey.isEmpty
                 ? (sessionStore.currentSessionKey.isEmpty ? status.mainSessionKey : sessionStore.currentSessionKey)
                 : rawSessionKey
+            let sessionKey = sessionStore.resolveSessionKey(resolvedKey)
             let seq = (src["seq"] as? Int64) ?? Int64(src["seq"] as? Int ?? 0)
             let msg = src["message"] as? [String: Any]
             let contentArr = msg?["content"] as? [[String: Any]]
-            let text = contentArr?.first?["text"] as? String ?? ""
+            // Concatenate all text content blocks — cards may be in any block
+            let text = contentArr?
+                .compactMap { $0["text"] as? String }
+                .joined(separator: "\n") ?? ""
             let ts = (msg?["timestamp"] as? Int64) ?? Int64(Date().timeIntervalSince1970 * 1000)
             let runId = src["runId"] as? String
 
+            let isActiveSession = sessionKey == sessionStore.currentSessionKey
             logger.info("Chat event: state=\(state, privacy: .public) sessionKey=\(sessionKey, privacy: .public) textLen=\(text.count)")
+            if state == "final" || state == "delta" {
+                log("CHAT \(state) session=\(sessionKey) active=\(isActiveSession) current=\(sessionStore.currentSessionKey) seq=\(seq)")
+            }
             if !text.isEmpty {
-                // Persist via SessionStore (handles cache, unread, UI update)
                 sessionStore.handleChatEvent(
                     sessionKey: sessionKey,
                     state: state,
@@ -506,23 +631,8 @@ class GatewayService: ObservableObject {
                     timestamp: ts,
                     runId: runId
                 )
-
-                // Also update legacy messages array for existing views
                 if state == "final" {
-                    if let last = messages.last, last.role == .agent, last.isStreaming {
-                        messages[messages.count - 1].content = text
-                        messages[messages.count - 1].isStreaming = false
-                    } else {
-                        messages.append(Message(role: .agent, content: text, isStreaming: false))
-                    }
                     log("Agent response complete (\(text.count) chars)")
-                } else if state == "delta" {
-                    if let last = messages.last, last.role == .agent, last.isStreaming {
-                        messages[messages.count - 1].content = text
-                    } else {
-                        messages.append(Message(role: .agent, content: text, isStreaming: true))
-                        log("Agent started responding")
-                    }
                 }
             }
 
@@ -551,6 +661,10 @@ class GatewayService: ObservableObject {
             log("Task event: \(src["status"] as? String ?? "?")")
             // Reindex tasks on task events
             Task { await EntityIndex.shared.reindex(type: .task) }
+
+        case "calendar", "event:calendar":
+            let src = json["payload"] as? [String: Any] ?? json
+            handleCalendarEvent(src)
 
         case "error":
             let src = json["payload"] as? [String: Any] ?? json
@@ -582,6 +696,18 @@ class GatewayService: ObservableObject {
         let payload = json["payload"] as? [String: Any] ?? [:]
         let payloadType = payload["type"] as? String
         let reqId = json["id"] as? String
+        let ok = json["ok"] as? Bool ?? false
+
+        // Debug: log all non-hello-ok responses so we can see system-event results
+        if payloadType != "hello-ok" {
+            if let error = json["error"] as? [String: Any] {
+                let msg = error["message"] as? String ?? "?"
+                let code = error["code"] as? String ?? error["code"].flatMap { "\($0)" } ?? ""
+                log("RES id=\(reqId.map { String($0.prefix(8)) } ?? "?")... ok=\(ok) error=\(code) \(msg)")
+            } else if reqId != nil {
+                log("RES id=\(reqId!.prefix(8))... ok=\(ok) type=\(payloadType ?? "nil")")
+            }
+        }
 
         // Dispatch to pending continuation if one exists
         if let reqId, let continuation = pendingRequests.removeValue(forKey: reqId) {
@@ -608,9 +734,6 @@ class GatewayService: ObservableObject {
             return
         }
 
-        // "ok" is at root level: {"type":"res","ok":true,"payload":{"type":"hello-ok",...}}
-        let ok = json["ok"] as? Bool ?? false
-
         if ok && payloadType == "hello-ok" {
             let server = payload["server"] as? [String: Any] ?? [:]
             let version = server["version"] as? String ?? "unknown"
@@ -619,6 +742,13 @@ class GatewayService: ObservableObject {
             log("Connected to gateway!")
             log("  server: v\(version)")
             log("  connId: \(connId.prefix(12))...")
+
+            // Debug: log auth scopes and caps from hello-ok
+            let auth = payload["auth"] as? [String: Any] ?? [:]
+            let scopes = auth["scopes"] as? [String] ?? []
+            let caps = auth["caps"] as? [String] ?? payload["caps"] as? [String] ?? []
+            log("  scopes: \(scopes.joined(separator: ", "))")
+            log("  caps: \(caps.isEmpty ? "(none)" : caps.joined(separator: ", "))")
             status.isConnected = true
             status.version = version
             status.connId = connId
@@ -642,12 +772,13 @@ class GatewayService: ObservableObject {
                 status.mainSessionKey = mainKey
                 log("  sessionKey: \(mainKey)")
 
-                // Initialize session in store and open it
+                // Initialize session in store; only open if user isn't already in a session
                 sessionStore.ensureSession(key: mainKey, title: "Main")
-                sessionStore.openSession(key: mainKey)
+                if sessionStore.currentSessionKey.isEmpty {
+                    sessionStore.openSession(key: mainKey)
+                }
 
-                // Notify agent that this client supports cards
-                sendSystemEvent(sessionKey: mainKey)
+                // Caps will be prepended to the first message in each session
             }
 
             // Drain offline outbox
@@ -656,6 +787,16 @@ class GatewayService: ObservableObject {
             }
             reconnectAttempt = 0
             startPingTimer()
+
+            // Sync sessions and history from gateway
+            Task { [weak self] in
+                await self?.syncSessions()
+                // Re-fetch history for current session to catch messages missed while offline
+                let currentKey = self?.sessionStore.currentSessionKey ?? ""
+                if !currentKey.isEmpty {
+                    await self?.fetchHistory(sessionKey: currentKey)
+                }
+            }
 
             // Start entity indexing on successful connection
             setupEntityIndex()
@@ -674,51 +815,149 @@ class GatewayService: ObservableObject {
     private func handleAgentEvent(_ event: AgentEvent) {
         // Resolve the session this event belongs to.
         // Priority: event.sessionKey → currentSessionKey → mainSessionKey
+        // Gateway wraps keys as agent:*:uuid — resolve back to local session key.
         let eventSessionKey: String = {
-            if !event.sessionKey.isEmpty { return event.sessionKey }
+            if !event.sessionKey.isEmpty {
+                return sessionStore.resolveSessionKey(event.sessionKey)
+            }
             if !sessionStore.currentSessionKey.isEmpty { return sessionStore.currentSessionKey }
             return status.mainSessionKey
         }()
+
+        let isActive = eventSessionKey == sessionStore.currentSessionKey
+        log("AGENT \(event.stream.logLabel) session=\(eventSessionKey) active=\(isActive) current=\(sessionStore.currentSessionKey)")
 
         switch event.stream {
         case .lifecycleStart:
             activeRunId = event.runId
             logger.info("Agent run started: \(event.runId.prefix(12)) session=\(eventSessionKey, privacy: .public)")
-            log("Agent started (run: \(event.runId.prefix(12))... session: \(eventSessionKey))")
-            // Insert a streaming placeholder in both stores using the correct session
-            let m = Message(role: .agent, content: "", isStreaming: true)
-            messages.append(m)
-            sessionStore.beginAgentResponse(sessionKey: eventSessionKey)
+            // Only insert streaming placeholder if this is the active session
+            if eventSessionKey == sessionStore.currentSessionKey {
+                sessionStore.beginAgentResponse(sessionKey: eventSessionKey)
+            }
 
         case .assistant(let text, _):
-            // Update the current streaming message with full text
-            if let idx = messages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
-                messages[idx].content = text
-            } else {
-                let m = Message(role: .agent, content: text, isStreaming: true)
-                messages.append(m)
-            }
-            // Also update SessionStore streaming message
-            if let idx = sessionStore.currentMessages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
-                sessionStore.currentMessages[idx].content = text
+            // Only update streaming UI if this is the active session
+            if eventSessionKey == sessionStore.currentSessionKey {
+                if let idx = sessionStore.currentMessages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
+                    sessionStore.currentMessages[idx].content = text
+                }
             }
 
         case .lifecycleEnd:
             logger.info("Agent run ended: \(event.runId.prefix(12)) session=\(eventSessionKey, privacy: .public)")
             log("Agent finished (run: \(event.runId.prefix(12))...)")
-            // Finalize legacy messages — but don't wipe content, chat final event will persist it
-            if let idx = messages.lastIndex(where: { $0.role == .agent && $0.isStreaming }) {
-                messages[idx].isStreaming = false
-                messages[idx].blocks = MessageParser.parse(messages[idx].content)
-            }
-            // Finalize SessionStore — use a small delay so chat final event can arrive first
-            // and update content before we clear the streaming state
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 300_000_000) // 300ms grace
-                self?.sessionStore.finalizeAgentResponse()
+            // Finalize only if this is the active session
+            if eventSessionKey == sessionStore.currentSessionKey {
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 300_000_000) // 300ms grace
+                    self?.sessionStore.finalizeAgentResponse()
+                }
             }
             activeRunId = nil
         }
+    }
+
+    // MARK: - Handle calendar events
+
+    private func handleCalendarEvent(_ payload: [String: Any]) {
+        let action = payload["action"] as? String ?? "sync"
+
+        switch action {
+        case "sync", "list":
+            // Full list replace from gateway
+            guard let items = payload["events"] as? [[String: Any]] else {
+                log("Calendar sync: no events array")
+                return
+            }
+            let decoded = items.compactMap { Self.decodeCalendarEvent($0) }
+            calendarEvents = decoded
+            log("Calendar sync: \(decoded.count) events")
+            Task { await EntityIndex.shared.reindex(type: .event) }
+
+        case "upsert":
+            // Single event created or updated
+            guard let item = payload["event"] as? [String: Any],
+                  let event = Self.decodeCalendarEvent(item) else { break }
+            if let idx = calendarEvents.firstIndex(where: { $0.id == event.id }) {
+                calendarEvents[idx] = event
+            } else {
+                calendarEvents.append(event)
+            }
+            log("Calendar upsert: \(event.title)")
+            Task { await EntityIndex.shared.reindex(type: .event) }
+
+        case "delete":
+            guard let eventId = payload["eventId"] as? String else { break }
+            calendarEvents.removeAll { $0.id == eventId }
+            log("Calendar delete: \(eventId)")
+            EntityIndex.shared.remove(ids: ["event:\(eventId)"])
+
+        default:
+            log("Calendar: unhandled action '\(action)'")
+        }
+    }
+
+    private static func decodeCalendarEvent(_ dict: [String: Any]) -> CalendarEvent? {
+        guard let id = dict["id"] as? String,
+              let title = dict["title"] as? String,
+              let startRaw = dict["startDate"] as? String,
+              let endRaw = dict["endDate"] as? String else {
+            return nil
+        }
+
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        // Fallback without fractional seconds
+        let fmtAlt = ISO8601DateFormatter()
+
+        guard let start = fmt.date(from: startRaw) ?? fmtAlt.date(from: startRaw),
+              let end = fmt.date(from: endRaw) ?? fmtAlt.date(from: endRaw) else {
+            return nil
+        }
+
+        let sourceStr = dict["source"] as? String ?? "agent"
+        let statusStr = dict["status"] as? String ?? "confirmed"
+
+        var attendees: [CalendarEvent.Attendee] = []
+        if let list = dict["attendees"] as? [[String: Any]] {
+            attendees = list.map { a in
+                CalendarEvent.Attendee(
+                    name: a["name"] as? String ?? "",
+                    email: a["email"] as? String,
+                    rsvp: a["rsvp"] as? String
+                )
+            }
+        }
+
+        var recurrence: CalendarEvent.RecurrenceRule? = nil
+        if let r = dict["recurrence"] as? [String: Any],
+           let freqStr = r["frequency"] as? String,
+           let freq = CalendarEvent.RecurrenceRule.Frequency(rawValue: freqStr) {
+            recurrence = CalendarEvent.RecurrenceRule(
+                frequency: freq,
+                interval: r["interval"] as? Int ?? 1,
+                until: (r["until"] as? String).flatMap { fmt.date(from: $0) ?? fmtAlt.date(from: $0) },
+                count: r["count"] as? Int,
+                daysOfWeek: r["daysOfWeek"] as? [Int]
+            )
+        }
+
+        return CalendarEvent(
+            id: id,
+            title: title,
+            startDate: start,
+            endDate: end,
+            isAllDay: dict["isAllDay"] as? Bool ?? false,
+            source: CalendarEvent.Source(rawValue: sourceStr) ?? .agent,
+            sourceId: dict["sourceId"] as? String,
+            location: dict["location"] as? String,
+            notes: dict["notes"] as? String,
+            attendees: attendees,
+            status: CalendarEvent.Status(rawValue: statusStr) ?? .confirmed,
+            recurrence: recurrence,
+            color: dict["color"] as? String
+        )
     }
 
     // MARK: - Send message to agent
@@ -728,7 +967,9 @@ class GatewayService: ObservableObject {
     // MARK: - Card capability instruction for agent
 
     private static let cardCapabilityPrompt = """
-    [SYSTEM] CLiOS mobile client connected. This session supports rich cards (cards.v1).
+    [SYSTEM] CLiOS mobile client connected (platform: iOS, client: clios).
+    The user is writing from the CLiOS native iOS app — NOT webchat, NOT Telegram, NOT Discord.
+    This session supports rich cards (cards.v1) and skills.
 
     IMPORTANT: When outputting structured data, you MUST use card codeblocks instead of plain text.
 
@@ -778,24 +1019,50 @@ class GatewayService: ObservableObject {
     2. Digest over spam — multiple similar items → one digest card, NOT separate cards.
     3. If no type fits, use plain text.
     4. Always use cards when structured data is available — the mobile app renders them as native UI components.
+    5. ALWAYS include a `session.title` card in your FIRST reply in any new session. Name the chat based on the user's first message, 3-5 words. Example:
+       ```card:session.title
+       title: Debug auth token refresh
+       ```
     """
 
     private func sendSystemEvent(sessionKey: String) {
+        // Try system-event first (requires operator.admin, only targets main session).
+        // If it fails, fall back to chat.send which works for any session.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let _ = try await self.sendRequest(method: "system-event", params: [
+                    "text": Self.cardCapabilityPrompt,
+                    "sessionKey": sessionKey
+                ])
+                self.log("system-event OK for session=\(sessionKey)")
+            } catch {
+                self.log("system-event FAILED: \(error.localizedDescription) — falling back to chat.send")
+                self.sendCapabilityViaChatSend(sessionKey: sessionKey)
+            }
+        }
+    }
+
+    private func sendCapabilityViaChatSend(sessionKey: String) {
+        let capsMessage = "[SYSTEM] " + Self.cardCapabilityPrompt
+        let idempotencyKey = "caps-\(sessionKey)-\(UUID().uuidString.prefix(8))"
         let frame: [String: Any] = [
             "type": "req",
             "id": UUID().uuidString,
-            "method": "system-event",
+            "method": "chat.send",
             "params": [
-                "text": Self.cardCapabilityPrompt,
-                "sessionKey": sessionKey
-            ] as [String: Any]
+                "sessionKey": sessionKey,
+                "message": capsMessage,
+                "idempotencyKey": idempotencyKey
+            ]
         ]
+        log("OUT chat.send (caps fallback) session=\(sessionKey)")
         sendJSON(frame) { [weak self] success in
             Task { @MainActor in
                 if success {
-                    self?.log("Sent system-event (cards.v1 capability prompt)")
+                    self?.log("Caps fallback delivered via chat.send")
                 } else {
-                    self?.log("Failed to send system-event")
+                    self?.log("Caps fallback via chat.send FAILED")
                 }
             }
         }
@@ -808,14 +1075,17 @@ class GatewayService: ObservableObject {
             ? status.mainSessionKey
             : sessionStore.currentSessionKey
         logger.info("Sending message to agent (\(text.count) chars) session=\(sessionKey, privacy: .public)")
-        log("OUT chat.send (\(text.count) chars)")
+        log("OUT chat.send → session=\(sessionKey) (current=\(sessionStore.currentSessionKey), main=\(status.mainSessionKey))")
 
-        // Persist user message via SessionStore
+        // Prepend card capability prompt to the first message in new sessions
+        var messageText = text
+        if !sentSystemEventSessions.contains(sessionKey) {
+            messageText = Self.cardCapabilityPrompt + "\n\n---\n\n" + text
+            sentSystemEventSessions.insert(sessionKey)
+            log("Prepended caps prompt to first message in session=\(sessionKey)")
+        }
+
         let prepared = sessionStore.prepareSend(text: text, sessionKey: sessionKey)
-
-        // Also keep legacy messages array in sync
-        let message = Message(role: .user, content: text)
-        messages.append(message)
 
         let frame: [String: Any] = [
             "type": "req",
@@ -823,7 +1093,7 @@ class GatewayService: ObservableObject {
             "method": "chat.send",
             "params": [
                 "sessionKey": sessionKey,
-                "message": text,
+                "message": messageText,
                 "idempotencyKey": prepared.idempotencyKey
             ]
         ]
@@ -937,6 +1207,47 @@ class GatewayService: ObservableObject {
         }
     }
 
+    // MARK: - History sync
+
+    /// Fetch message history from gateway for a session and ingest into local cache.
+    func fetchHistory(sessionKey: String, limit: Int = 200) async {
+        guard status.isConnected else { return }
+        do {
+            let payload = try await sendRequest(method: "chat.history", params: [
+                "sessionKey": sessionKey,
+                "limit": limit
+            ])
+            guard let messages = payload["messages"] as? [[String: Any]] else {
+                log("chat.history: no messages in response")
+                return
+            }
+            sessionStore.ingestHistory(sessionKey: sessionKey, rawMessages: messages)
+            log("Fetched \(messages.count) history messages for \(sessionKey)")
+        } catch {
+            log("chat.history failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Fetch session list from gateway and merge into local cache.
+    func syncSessions() async {
+        guard status.isConnected else { return }
+        do {
+            let payload = try await sendRequest(method: "sessions.list", params: [
+                "limit": 50,
+                "includeDerivedTitles": true,
+                "includeLastMessage": true
+            ] as [String: Any])
+            guard let sessions = payload["sessions"] as? [[String: Any]] else {
+                log("sessions.list: no sessions in response")
+                return
+            }
+            sessionStore.mergeSessions(from: sessions)
+            log("Synced \(sessions.count) sessions from gateway")
+        } catch {
+            log("sessions.list failed: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Entity Index
 
     private var entityIndexConfigured = false
@@ -956,6 +1267,7 @@ class GatewayService: ObservableObject {
         index.register(provider: SessionEntityProvider(), for: .session)
         index.register(provider: AgentEntityProvider(), for: .agent)
         index.register(provider: CronEntityProvider(), for: .cron)
+        index.register(provider: CalendarEventEntityProvider(), for: .event)
         index.startPeriodicReindex()
 
         Task { await index.reindexAll() }

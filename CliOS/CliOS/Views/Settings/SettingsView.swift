@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var gateway: GatewayService
     @State private var showImmersiveTest = false
+    @State private var showClearSessionsConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -153,6 +154,28 @@ struct SettingsView: View {
                         Label("Pill Tab Bar", systemImage: "capsule.fill")
                             .foregroundColor(Theme.accent)
                     }
+
+                    NavigationLink {
+                        ChatCardsMockView()
+                            .toolbar(.hidden, for: .tabBar)
+                    } label: {
+                        Label("Chat Cards", systemImage: "rectangle.stack")
+                            .foregroundColor(Theme.accent)
+                    }
+
+                    NavigationLink {
+                        DashboardMockView()
+                            .toolbar(.hidden, for: .tabBar)
+                    } label: {
+                        Label("Dashboard v2", systemImage: "squares.leading.rectangle")
+                            .foregroundColor(Theme.accent)
+                    }
+                }
+
+                Section("Demo") {
+                    Button("Clear All Sessions", role: .destructive) {
+                        showClearSessionsConfirm = true
+                    }
                 }
 
                 Section {
@@ -167,6 +190,13 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .fullScreenCover(isPresented: $showImmersiveTest) {
                 ImmersiveTestScreen()
+            }
+            .confirmationDialog("Clear all sessions?", isPresented: $showClearSessionsConfirm, titleVisibility: .visible) {
+                Button("Clear All", role: .destructive) {
+                    gateway.sessionStore.clearSessionsForDemo()
+                }
+            } message: {
+                Text("Sessions will disappear until app restart.")
             }
         }
     }
