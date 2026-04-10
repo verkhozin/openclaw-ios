@@ -271,3 +271,51 @@ struct CalendarEventEntityProvider: EntityProvider {
         return entities
     }
 }
+
+// MARK: - Project Entity Provider
+
+/// Indexes projects from workspace via ProjectService.
+struct ProjectEntityProvider: EntityProvider {
+
+    func fetchEntities() async throws -> [EntityItem] {
+        guard let gwURL = await GatewayService.shared.gatewayURL,
+              let token = await GatewayService.shared.authToken else {
+            return []
+        }
+
+        let host = gwURL.host ?? "localhost"
+        let scheme = (gwURL.scheme == "wss") ? "https" : "http"
+        let port = gwURL.port ?? 18789
+        guard let baseURL = URL(string: "\(scheme)://\(host):\(port)") else { return [] }
+
+        let service = ProjectService(gatewayBaseURL: baseURL, token: token)
+
+        let index: ProjectIndex
+        do {
+            index = try await service.fetchProjectIndex()
+        } catch {
+            logger.warning("ProjectEntityProvider: failed to fetch project index: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+
+        let entities = index.projects.map { entry in
+            EntityItem(
+                id: "project:\(entry.id)",
+                type: .project,
+                name: entry.name,
+                path: "projects/\(entry.id)/",
+                subtitle: entry.status,
+                icon: EntityType.project.icon,
+                updatedAt: Self.parseTimestamp(entry.createdAt)
+            )
+        }
+
+        logger.info("ProjectEntityProvider: indexed \(entities.count) projects")
+        return entities
+    }
+
+    private static func parseTimestamp(_ isoString: String) -> Int64 {
+        let formatter = ISO8601DateFormatter()
+        return Int64((formatter.date(from: isoString)?.timeIntervalSince1970 ?? 0) * 1000)
+    }
+}

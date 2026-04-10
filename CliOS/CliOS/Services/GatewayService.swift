@@ -1274,6 +1274,7 @@ class GatewayService: ObservableObject {
         index.register(provider: AgentEntityProvider(), for: .agent)
         index.register(provider: CronEntityProvider(), for: .cron)
         index.register(provider: CalendarEventEntityProvider(), for: .event)
+        index.register(provider: ProjectEntityProvider(), for: .project)
         index.startPeriodicReindex()
 
         Task { await index.reindexAll() }

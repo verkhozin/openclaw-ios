@@ -11,6 +11,7 @@ enum EntityType: String, Codable, CaseIterable {
     case cron
     case branch
     case event
+    case project
 
     var label: String {
         switch self {
@@ -21,6 +22,7 @@ enum EntityType: String, Codable, CaseIterable {
         case .cron:    return "Cron Jobs"
         case .branch:  return "Branch"
         case .event:   return "Events"
+        case .project: return "Projects"
         }
     }
 
@@ -33,6 +35,7 @@ enum EntityType: String, Codable, CaseIterable {
         case .cron:    return "clock"
         case .branch:  return "arrow.triangle.branch"
         case .event:   return "calendar"
+        case .project: return "folder.fill"
         }
     }
 
@@ -45,6 +48,7 @@ enum EntityType: String, Codable, CaseIterable {
         case .cron:    return .yellow
         case .branch:  return .cyan
         case .event:   return .red
+        case .project: return .mint
         }
     }
 }
