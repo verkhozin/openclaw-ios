@@ -796,6 +796,8 @@ class GatewayService: ObservableObject {
                 if !currentKey.isEmpty {
                     await self?.fetchHistory(sessionKey: currentKey)
                 }
+                // Load project→session mapping from workspace
+                await self?.sessionStore.loadSessionMapping()
             }
 
             // Start entity indexing on successful connection
