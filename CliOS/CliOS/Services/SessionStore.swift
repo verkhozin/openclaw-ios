@@ -17,6 +17,9 @@ final class SessionStore: ObservableObject {
     private let db = ChatDatabase.shared
     private var streamingMessage: Message?  // in-memory only while agent is typing
 
+    /// Cached session→project mapping loaded from workspace/projects/_sessions.json
+    private var sessionMapping = SessionMapping(sessions: [:])
+
     private init() {
         loadSessions()
     }
@@ -611,6 +614,70 @@ final class SessionStore: ObservableObject {
         }
 
         return key
+    }
+
+    // MARK: - Project mapping
+
+    /// Load session→project mapping from workspace via ProjectService.
+    func loadSessionMapping() async {
+        guard let service = makeProjectService() else { return }
+        do {
+            sessionMapping = try await service.fetchSessionMapping()
+            logger.info("Loaded session mapping: \(self.sessionMapping.sessions.count) entries")
+        } catch {
+            // File may not exist yet — start with empty mapping
+            sessionMapping = SessionMapping(sessions: [:])
+            logger.info("No session mapping found, starting empty")
+        }
+    }
+
+    /// Get the project ID for a session, if any.
+    func projectId(for sessionKey: String) -> String? {
+        sessionMapping.sessions[sessionKey]
+    }
+
+    /// Link a session to a project and persist the mapping.
+    func linkSession(_ sessionKey: String, to projectId: String) {
+        sessionMapping.sessions[sessionKey] = projectId
+        persistSessionMapping()
+    }
+
+    /// Unlink a session from its project and persist the mapping.
+    func unlinkSession(_ sessionKey: String) {
+        sessionMapping.sessions.removeValue(forKey: sessionKey)
+        persistSessionMapping()
+    }
+
+    /// Return sessions that belong to a given project.
+    func sessions(for projectId: String) -> [ChatSession] {
+        let linkedKeys = sessionMapping.sessions
+            .filter { $0.value == projectId }
+            .map(\.key)
+        let keySet = Set(linkedKeys)
+        return sessions.filter { keySet.contains($0.sessionKey) }
+    }
+
+    private func persistSessionMapping() {
+        guard let service = makeProjectService() else { return }
+        let mapping = sessionMapping
+        Task {
+            do {
+                try await service.saveSessionMapping(mapping)
+                logger.info("Session mapping saved")
+            } catch {
+                logger.warning("Failed to save session mapping: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func makeProjectService() -> ProjectService? {
+        guard let gwURL = GatewayService.shared.gatewayURL,
+              let token = GatewayService.shared.authToken else { return nil }
+        let host = gwURL.host ?? "localhost"
+        let scheme = (gwURL.scheme == "wss") ? "https" : "http"
+        let port = gwURL.port ?? 18789
+        guard let baseURL = URL(string: "\(scheme)://\(host):\(port)") else { return nil }
+        return ProjectService(gatewayBaseURL: baseURL, token: token)
     }
 
     // MARK: - Helpers

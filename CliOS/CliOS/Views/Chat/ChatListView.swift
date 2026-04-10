@@ -282,7 +282,10 @@ struct ChatListView: View {
                             gateway.sessionStore.openSession(key: session.sessionKey)
                         }
                 } label: {
-                    ChatSessionRow(session: session)
+                    ChatSessionRow(
+                        session: session,
+                        projectName: gateway.sessionStore.projectId(for: session.sessionKey)
+                    )
                 }
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.5)
@@ -467,9 +470,12 @@ struct ChatListView: View {
         }
     }
 
-    private func startNewChat() {
+    private func startNewChat(projectId: String? = nil) {
         let key = UUID().uuidString
         gateway.sessionStore.ensureSession(key: key)
+        if let projectId {
+            gateway.sessionStore.linkSession(key, to: projectId)
+        }
         gateway.sessionStore.openSession(key: key)
         navigateToChat = true
     }
@@ -483,6 +489,7 @@ struct ChatListView: View {
 
 struct ChatSessionRow: View {
     let session: ChatSession
+    var projectName: String?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -504,6 +511,16 @@ struct ChatSessionRow: View {
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
+
+                    if let projectName {
+                        Text(projectName)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(EntityType.project.tint)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(EntityType.project.tint.opacity(0.15))
+                            .clipShape(Capsule())
+                    }
 
                     Spacer()
 

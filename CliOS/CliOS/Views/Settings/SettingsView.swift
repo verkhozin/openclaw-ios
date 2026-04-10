@@ -170,6 +170,14 @@ struct SettingsView: View {
                         Label("Dashboard v2", systemImage: "squares.leading.rectangle")
                             .foregroundColor(Theme.accent)
                     }
+
+                    NavigationLink {
+                        ProjectsMockView()
+                            .toolbar(.hidden, for: .tabBar)
+                    } label: {
+                        Label("Projects", systemImage: "folder.fill")
+                            .foregroundColor(Theme.accent)
+                    }
                 }
 
                 Section("Demo") {
