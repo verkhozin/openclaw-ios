@@ -186,7 +186,9 @@ struct StatusBadge: View {
 
 struct ProjectDetailView: View {
     let project: Project
+    @EnvironmentObject private var gateway: GatewayService
     @EnvironmentObject private var sessionStore: SessionStore
+    @State private var navigateToChat = false
 
     var body: some View {
         ScrollView {
@@ -206,6 +208,28 @@ struct ProjectDetailView: View {
                             .font(.system(.body))
                             .foregroundColor(Theme.textSecondary)
                     }
+
+                    // Start chat in project context
+                    Button {
+                        let key = UUID().uuidString
+                        sessionStore.ensureSession(key: key, title: project.name)
+                        sessionStore.linkSession(key, to: project.id)
+                        sessionStore.openSession(key: key)
+                        navigateToChat = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "bubble.left.fill")
+                                .font(.system(size: 12))
+                            Text("New Chat")
+                                .font(.system(.subheadline, weight: .semibold))
+                        }
+                        .foregroundColor(Theme.accent)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Theme.accent.opacity(0.15))
+                        .clipShape(Capsule())
+                    }
+                    .padding(.top, 4)
                 }
                 .padding(Theme.paddingM)
                 .background(Theme.surface)
@@ -258,6 +282,11 @@ struct ProjectDetailView: View {
         .background(Theme.bg)
         .navigationTitle(project.name)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $navigateToChat) {
+            ChatScreenView()
+                .navigationBarHidden(true)
+                .toolbar(.hidden, for: .tabBar)
+        }
     }
 
     private func sectionHeader(_ title: String, icon: String) -> some View {
