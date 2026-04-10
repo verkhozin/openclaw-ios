@@ -1079,10 +1079,14 @@ class GatewayService: ObservableObject {
         logger.info("Sending message to agent (\(text.count) chars) session=\(sessionKey, privacy: .public)")
         log("OUT chat.send → session=\(sessionKey) (current=\(sessionStore.currentSessionKey), main=\(status.mainSessionKey))")
 
-        // Prepend card capability prompt to the first message in new sessions
+        // Prepend card capability prompt (+ project context if applicable) to the first message in new sessions
         var messageText = text
         if !sentSystemEventSessions.contains(sessionKey) {
-            messageText = Self.cardCapabilityPrompt + "\n\n---\n\n" + text
+            var preamble = Self.cardCapabilityPrompt
+            if let projectContext = buildProjectContext(for: sessionKey) {
+                preamble += "\n\n" + projectContext
+            }
+            messageText = preamble + "\n\n---\n\n" + text
             sentSystemEventSessions.insert(sessionKey)
             log("Prepended caps prompt to first message in session=\(sessionKey)")
         }
@@ -1274,6 +1278,24 @@ class GatewayService: ObservableObject {
 
         Task { await index.reindexAll() }
         logger.info("Entity index configured and initial reindex started")
+    }
+
+    // MARK: - Project Context
+
+    /// Build project context string for a session, if it belongs to a project.
+    private func buildProjectContext(for sessionKey: String) -> String? {
+        guard let projectId = sessionStore.projectId(for: sessionKey) else { return nil }
+        // Use cached mapping — project name/description will be fetched async on first use.
+        // For now, include the essential info the agent needs: project id and paths.
+        return """
+        [PROJECT CONTEXT]
+        You are working inside project "\(projectId)".
+        - Working directory: workspace/projects/\(projectId)/
+        - Tasks: workspace/projects/\(projectId)/tasks/
+        - Files: workspace/projects/\(projectId)/files/
+        - All file operations for this project should use this working directory.
+        - Read workspace/projects/\(projectId)/project.json for project name and description.
+        """
     }
 
     // MARK: - Helpers
