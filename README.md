@@ -8,7 +8,7 @@
 
 <p align="center">
 
-https://github.com/verkhozin/openclaw-ios/raw/refs/heads/main/demo/cliosDEMO.mp4
+https://github.com/verkhozin/openclaw-ios/releases/download/v0.1.0/cliosDEMO.mp4
 
 </p>
 
