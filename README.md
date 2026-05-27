@@ -7,9 +7,7 @@
 <p align="center">Native iOS command center for OpenClaw AI agents.</p>
 
 <p align="center">
-
-![CLiOS Demo](demo/cliosDEMO.mp4)
-
+  <img src="demo/cliosDEMO.gif" alt="CLiOS demo" width="600" />
 </p>
 
 <br>
