@@ -6,11 +6,7 @@
 
 <p align="center">Native iOS command center for OpenClaw AI agents.</p>
 
-<p align="center">
-
 https://github.com/verkhozin/openclaw-ios/releases/download/v0.1.0/cliosDEMO.mp4
-
-</p>
 
 <br>
 
