@@ -80,6 +80,30 @@ struct MentionPopupView: View {
     }
 }
 
+// MARK: - Popup Transition
+
+struct MentionPopupTransition: ViewModifier {
+    let blur: CGFloat
+    let scale: CGFloat
+    let opacity: Double
+
+    func body(content: Content) -> some View {
+        content
+            .blur(radius: blur)
+            .scaleEffect(scale, anchor: .bottom)
+            .opacity(opacity)
+    }
+}
+
+extension AnyTransition {
+    static var mentionPopup: AnyTransition {
+        .modifier(
+            active: MentionPopupTransition(blur: 10, scale: 0.92, opacity: 0),
+            identity: MentionPopupTransition(blur: 0, scale: 1, opacity: 1)
+        )
+    }
+}
+
 // MARK: - Result Row
 
 private struct MentionResultRow: View {

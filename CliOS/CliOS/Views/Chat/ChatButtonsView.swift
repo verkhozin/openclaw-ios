@@ -228,6 +228,8 @@ struct ChatInputOverlay: View {
     @State private var mockMentionIndex = 0
     @State private var mentionQuery: String? = nil
     @State private var mentionAnchorRange: NSRange? = nil
+    @State private var popupVisible = false
+    @State private var lastMentionQuery: String = ""
 
     private let btnHeight: CGFloat = 48
     private let transition = Animation.easeInOut(duration: 0.5)
@@ -237,9 +239,9 @@ struct ChatInputOverlay: View {
 
         VStack(spacing: 8) {
             // Mention autocomplete popup
-            if let query = mentionQuery {
+            if popupVisible {
                 MentionPopupView(
-                    query: query,
+                    query: mentionQuery ?? lastMentionQuery,
                     onSelect: { entity in
                         if let range = mentionAnchorRange {
                             mentionController.replaceMention(range: range, entity: entity)
@@ -249,7 +251,7 @@ struct ChatInputOverlay: View {
                     },
                     onDismiss: { mentionQuery = nil }
                 )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(.mentionPopup)
             }
 
             // Input bar
@@ -293,8 +295,8 @@ struct ChatInputOverlay: View {
                 // Send / Close
                 Button(action: {
                     if hasText {
-                        let (text, mentions) = mentionController.extractMessage()
-                        gateway.sendMessage(text, mentions: mentions)
+                        let (text, _) = mentionController.extractMessage()
+                        gateway.sendMessage(text)
                         messageText = ""
                     }
                     withAnimation(transition) {
@@ -317,6 +319,20 @@ struct ChatInputOverlay: View {
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 inputFocused = true
+            }
+        }
+        .onChange(of: mentionQuery) { old, new in
+            if let q = new { lastMentionQuery = q }
+            let appearing = old == nil && new != nil
+            let disappearing = old != nil && new == nil
+            if appearing {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
+                    popupVisible = true
+                }
+            } else if disappearing {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) {
+                    popupVisible = false
+                }
             }
         }
     }

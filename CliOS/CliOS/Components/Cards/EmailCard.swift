@@ -142,6 +142,10 @@ struct EmailCard: View {
                 result + Text(s)
                     .font(.system(size: level == 1 ? 18 : level == 2 ? 16 : 15, weight: .bold))
                     .foregroundColor(Theme.textPrimary)
+            case .mention(_, _, _, let displayName):
+                result + Text("@\(displayName)")
+                    .font(bodyFont)
+                    .foregroundColor(Theme.accent)
             }
         }
         .lineSpacing(4)

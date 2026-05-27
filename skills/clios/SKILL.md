@@ -350,6 +350,68 @@ title: Deploy verkh.tech landing
 ```
 App uses this to name the chat. Not rendered visually.
 
+## Mentions
+
+User messages may contain inline entity references in the format:
+
+```
+@[type:entityId:displayName]
+```
+
+The app renders these as tappable chips. When you see a mention, resolve the entity and act on it.
+
+### Types
+
+| Type | entityId format | How to resolve |
+|------|----------------|----------------|
+| `file` | workspace path (e.g. `src/App.swift`) | Read the file from workspace |
+| `task` | task ID (e.g. `clios-015`) | Check task board / project tracker |
+| `session` | session key | Look up chat session history |
+| `agent` | agent name (e.g. `code`) | Reference the agent by name |
+| `cron` | cron job ID | Check cron schedule |
+| `branch` | branch name | Check git branch |
+
+### Examples in user messages
+
+```
+Посмотри @[task:clios-015:Fix input auto-resize] — почему не работает?
+```
+→ Agent should look up task `clios-015`, understand the context, and respond about that specific task.
+
+```
+Отредактируй @[file:src/Services/Auth.swift:Auth.swift] — добавь refresh token
+```
+→ Agent should read `src/Services/Auth.swift` from workspace and make the edit.
+
+```
+Продолжи тред из @[session:abc123:Design Chat]
+```
+→ Agent should reference session `abc123` for prior context.
+
+### Using mentions in replies
+
+When referencing entities in your response, use the same format — the app will render them as chips:
+
+```
+Готово! Обновил @[file:src/Services/Auth.swift:Auth.swift], создал PR:
+
+\```card:github.pr
+title: Add refresh token logic
+status: open
+repo: verkh-tech/clios
+branch: feat/refresh-token
+\```
+```
+
+### Resolution priority
+
+1. **file** — read from workspace via filesystem
+2. **task** — check project tracker (Linear, GitHub Issues, etc.)
+3. **session** — reference chat history for context
+4. **agent** — address or delegate to the named agent
+
+If an entity cannot be resolved (file not found, task ID unknown), say so explicitly — don't guess.
+
 ## Detailed Card Specs
 
 For full field specifications, read: `references/card-specs.md`

@@ -9,6 +9,12 @@ enum MessageParser {
 
     // MARK: - Public
 
+    /// Parse only inline mention markers from text, returning styled spans.
+    /// Used for user message bubbles that don't need full markdown parsing.
+    static func parseMentions(_ text: String) -> [InlineSpan] {
+        parseInlineSpans(text)
+    }
+
     /// Parse full message text into an ordered array of content blocks.
     /// Call once when streaming ends (phase: "end"), not on every delta.
     static func parse(_ text: String) -> [ContentBlock] {

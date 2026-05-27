@@ -206,7 +206,7 @@ clios://connect?host=<ip>&port=<port>&token=<gateway-token>
 
 Example:
 ```
-clios://connect?host=138.124.85.254&port=18789&token=0a7a1e581da351dd0ad93bf18b2fba1f40189d380abeb219
+clios://connect?host=203.0.113.10&port=18789&token=abc123exampletoken
 ```
 
 How it works:

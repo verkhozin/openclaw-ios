@@ -175,13 +175,25 @@ private struct CommandsHeightKey: PreferenceKey {
 private struct CommandPillsView: View {
     var isVisible: Bool = true
 
-    @State private var selectedModel = "Sonnet 4.6"
+    @EnvironmentObject private var gateway: GatewayService
+
+    @State private var selectedModelIndex = 1 // default Sonnet
     @State private var thinkingLevel = 0
     @State private var fastMode = false
     @State private var visibleItems: Set<Int> = []
+    @State private var didSyncModel = false
 
-    private let models = ["Haiku 4.5", "Sonnet 4.6", "Opus 4.6"]
-    private let thinkingLabels = ["Off", "Low", "Med", "High"]
+    private static let models: [(label: String, slug: String)] = [
+        ("Haiku 4.5", "haiku"),
+        ("Sonnet 4.6", "sonnet"),
+        ("Opus 4.6", "opus"),
+    ]
+    private static let thinkingLevels: [(label: String, command: String)] = [
+        ("Off", "off"),
+        ("Low", "low"),
+        ("Med", "medium"),
+        ("High", "high"),
+    ]
 
     private let sections: [(title: String, subtitle: String)] = [
         ("Session", "Chat flow control"),
@@ -198,20 +210,30 @@ private struct CommandPillsView: View {
         visibleItems.contains(index)
     }
 
+    /// Sync selectedModelIndex from gateway status.model (once)
+    private func syncModelFromGateway() {
+        guard !didSyncModel else { return }
+        let model = gateway.status.model.lowercased()
+        if let idx = Self.models.firstIndex(where: { model.contains($0.slug) }) {
+            selectedModelIndex = idx
+        }
+        didSyncModel = true
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // MARK: - Controls (indices 9, 8, 7 — top to bottom = last to appear)
             VStack(spacing: 14) {
                 controlRow("Model") {
                     Button {
-                        let current = models.firstIndex(of: selectedModel) ?? 0
-                        let next = (current + 1) % models.count
+                        let next = (selectedModelIndex + 1) % Self.models.count
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            selectedModel = models[next]
+                            selectedModelIndex = next
                         }
+                        gateway.sendCommand("/model \(Self.models[next].slug)")
                     } label: {
                         HStack(spacing: 6) {
-                            Text(selectedModel)
+                            Text(Self.models[selectedModelIndex].label)
                                 .font(.system(size: 15, weight: .medium))
                                 .contentTransition(.numericText())
                             Image(systemName: "chevron.right")
@@ -228,9 +250,12 @@ private struct CommandPillsView: View {
 
                 controlRow("Thinking") {
                     PillPicker(
-                        options: thinkingLabels,
+                        options: Self.thinkingLevels.map(\.label),
                         selection: $thinkingLevel
                     )
+                    .onChange(of: thinkingLevel) { _, newValue in
+                        gateway.sendCommand("/think \(Self.thinkingLevels[newValue].command)")
+                    }
                 }
                 .staggerIn(visible: itemVisible(8))
 
@@ -238,8 +263,16 @@ private struct CommandPillsView: View {
                     Toggle("", isOn: $fastMode)
                         .labelsHidden()
                         .tint(Theme.accent)
+                        .onChange(of: fastMode) { _, newValue in
+                            gateway.sendCommand("/fast \(newValue ? "on" : "off")")
+                        }
                 }
                 .staggerIn(visible: itemVisible(7))
+            }
+            .onAppear { syncModelFromGateway() }
+            .onChange(of: gateway.status.model) { _, _ in
+                didSyncModel = false
+                syncModelFromGateway()
             }
 
             // Divider (index 6)

@@ -18,7 +18,7 @@ struct ChatContentView: View {
             Color(.secondarySystemBackground)
 
             if messages.isEmpty {
-                EmptyChatView(greeting: greeting, keyboardUp: keyboardUp)
+                EmptyChatView(greeting: greeting)
                     .transition(.blurReplace)
                     .animation(.easeOut(duration: 0.3), value: messages.isEmpty)
             }
@@ -32,13 +32,26 @@ struct ChatContentView: View {
                             // Messages loaded from cache don't animate
                             let isInitial = initialMessageIDs.contains(message.id)
                             let isNew = !isInitial && !appearedMessages.contains(message.id)
+                            let errorMsg = gateway.messageErrors[message.id.uuidString]
 
-                            ChatBubble(
-                                text: message.content,
-                                isUser: message.role == .user,
-                                isStreaming: message.isStreaming
-                            )
+                            HStack(alignment: .bottom, spacing: 6) {
+                                if message.role == .user, let errorMsg {
+                                    MessageErrorButton(
+                                        error: errorMsg,
+                                        messageText: message.content,
+                                        messageId: message.id.uuidString
+                                    )
+                                    .transition(.scale.combined(with: .opacity))
+                                }
+
+                                ChatBubble(
+                                    text: message.content,
+                                    isUser: message.role == .user,
+                                    isStreaming: message.isStreaming
+                                )
+                            }
                             .animation(.easeInOut(duration: 0.25), value: message.isStreaming)
+                            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: errorMsg != nil)
                             .id(message.id)
                             .offset(y: isNew ? 20 : 0)
                             .opacity(isNew ? 0 : 1)
@@ -198,7 +211,6 @@ private struct ChatGreeting {
 
 private struct EmptyChatView: View {
     let greeting: ChatGreeting
-    var keyboardUp: Bool = false
 
     private var formattedDate: String {
         let f = DateFormatter()
@@ -227,8 +239,6 @@ private struct EmptyChatView: View {
         .padding(.horizontal, 32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.keyboard)
-        .offset(y: keyboardUp ? -80 : -30)
-        .animation(.easeInOut(duration: 0.4), value: keyboardUp)
     }
 }
 
@@ -249,8 +259,7 @@ struct ChatBubble: View {
             if isUser { Spacer(minLength: 60) }
 
             if isUser {
-                Text(text)
-                    .font(.system(size: 16))
+                buildAttributedText(MessageParser.parseMentions(text))
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 14)
@@ -459,6 +468,18 @@ struct ChatCardView: View {
                 checklist: parseTodoItems(f("items"))
             )
 
+        case .linearIssue, .githubIssue:
+            TaskCard(
+                source: TaskSource(rawValue: f("source", fallback: card.type == .githubIssue ? "github" : "linear")) ?? .linear,
+                id: f("id"),
+                title: f("title"),
+                status: TaskStatus(rawValue: f("status")) ?? .todo,
+                priority: taskPriority(f("priority")),
+                assignee: f("assignee").isEmpty ? nil : f("assignee"),
+                labels: f("labels").components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty },
+                project: f("project").isEmpty ? nil : f("project")
+            )
+
         default:
             // Fallback for unknown/unsupported card types
             VStack(alignment: .leading, spacing: 6) {
@@ -494,6 +515,16 @@ struct ChatCardView: View {
             guard let text = parts.first, !text.isEmpty else { return nil }
             let done = parts.count > 1 && parts[1].trimmingCharacters(in: .whitespaces) == "true"
             return ChecklistItem(text: text, isCompleted: done)
+        }
+    }
+
+    private func taskPriority(_ raw: String) -> TaskPriority {
+        switch raw.lowercased() {
+        case "urgent": .urgent
+        case "high": .high
+        case "medium": .medium
+        case "low": .low
+        default: .none
         }
     }
 
@@ -817,6 +848,90 @@ extension View {
         } else {
             self
         }
+    }
+}
+
+// MARK: - Message Error Button
+
+struct MessageErrorButton: View {
+    let error: String
+    let messageText: String
+    let messageId: String
+
+    @EnvironmentObject private var gateway: GatewayService
+    @State private var showPopover = false
+
+    var body: some View {
+        Button {
+            showPopover = true
+        } label: {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 20))
+                .foregroundStyle(.red)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showPopover, attachmentAnchor: .point(.leading)) {
+            MessageErrorPopover(
+                error: error,
+                onRetry: {
+                    showPopover = false
+                    gateway.resendMessage(messageText, originalId: messageId)
+                },
+                onCopyText: {
+                    UIPasteboard.general.string = messageText
+                    showPopover = false
+                },
+                onCopyError: {
+                    UIPasteboard.general.string = error
+                    showPopover = false
+                }
+            )
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+private struct MessageErrorPopover: View {
+    let error: String
+    let onRetry: () -> Void
+    let onCopyText: () -> Void
+    let onCopyError: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Error description
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                Text(error)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            // Action buttons
+            Button(action: onRetry) {
+                Label("Retry", systemImage: "arrow.clockwise")
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Button(action: onCopyText) {
+                Label("Copy message", systemImage: "doc.on.doc")
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Button(action: onCopyError) {
+                Label("Copy error", systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(16)
+        .frame(width: 220)
     }
 }
 

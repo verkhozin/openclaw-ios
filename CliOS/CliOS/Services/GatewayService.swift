@@ -33,6 +33,8 @@ class GatewayService: ObservableObject {
     @Published var cronJobs: [CronJob] = []
     @Published var calendarEvents: [CalendarEvent] = []
     @Published var connectionLog: [String] = []
+    /// Per-message errors keyed by message ID string (matches Message.id UUID string).
+    @Published var messageErrors: [String: String] = [:]
 
     /// Discrete connection events — subscribe for notification triggers.
     let connectionEvents = PassthroughSubject<ConnectionEvent, Never>()
@@ -722,14 +724,16 @@ class GatewayService: ObservableObject {
 
         if let error = json["error"] as? [String: Any] {
             let msg = error["message"] as? String ?? "Unknown error"
-            let code = error["code"] as? Int
-            log("Response error: \(msg)\(code.map { " [code \($0)]" } ?? "")")
+            let code = error["code"] as? String ?? error["code"].flatMap { "\($0)" }
+            log("Response error: \(msg)\(code.map { " [\($0)]" } ?? "")")
 
             // If verifying, surface the error and abort
             if isVerifyingConnection {
                 isVerifyingConnection = false
                 connectionError = msg
                 disconnect()
+            } else if let reqId {
+                messageErrors[reqId] = msg
             }
             return
         }
@@ -1016,6 +1020,19 @@ class GatewayService: ObservableObject {
     - story — notable event (fields: title, body, action, action_target)
     - session.title — name this chat session, 3-5 words (fields: title). Send as FIRST reply in new sessions.
 
+    ## Mentions
+    User messages may contain inline mentions in the format: @[type:entityId:displayName]
+    Examples:
+    - @[task:clios-015:Fix input auto-resize] — reference to a task
+    - @[file:src/App.swift:App.swift] — reference to a workspace file
+    - @[session:abc123:Design Chat] — reference to a chat session
+    - @[agent:code:CodeAgent] — reference to an agent
+
+    When you see a mention:
+    1. Treat `type` as the entity kind (task, file, session, agent, cron, branch).
+    2. Use `entityId` to look up context — read the file, check the task board, etc.
+    3. In your replies, use the same @[type:id:name] format to reference entities — the app renders them as tappable chips.
+
     ## Rules
     1. One type per situation — type follows from context.
     2. Digest over spam — multiple similar items → one digest card, NOT separate cards.
@@ -1072,11 +1089,11 @@ class GatewayService: ObservableObject {
 
     // MARK: - Send message to agent
 
-    func sendMessage(_ text: String, mentions: [[String: String]] = []) {
+    func sendMessage(_ text: String) {
         let sessionKey = sessionStore.currentSessionKey.isEmpty
             ? status.mainSessionKey
             : sessionStore.currentSessionKey
-        logger.info("Sending message to agent (\(text.count) chars, \(mentions.count) mentions) session=\(sessionKey, privacy: .public)")
+        logger.info("Sending message to agent (\(text.count) chars) session=\(sessionKey, privacy: .public)")
         log("OUT chat.send → session=\(sessionKey) (current=\(sessionStore.currentSessionKey), main=\(status.mainSessionKey))")
 
         // Prepend card capability prompt (+ project context if applicable) to the first message in new sessions
@@ -1093,14 +1110,11 @@ class GatewayService: ObservableObject {
 
         let prepared = sessionStore.prepareSend(text: text, sessionKey: sessionKey)
 
-        var params: [String: Any] = [
+        let params: [String: Any] = [
             "sessionKey": sessionKey,
             "message": messageText,
             "idempotencyKey": prepared.idempotencyKey,
         ]
-        if !mentions.isEmpty {
-            params["mentions"] = mentions
-        }
 
         let frame: [String: Any] = [
             "type": "req",
@@ -1122,6 +1136,35 @@ class GatewayService: ObservableObject {
                         content: text,
                         idempotencyKey: prepared.idempotencyKey
                     )
+                }
+            }
+        }
+    }
+
+    /// Resend a previously failed message (same text, new request ID, no new UI message).
+    func resendMessage(_ text: String, originalId: String) {
+        messageErrors.removeValue(forKey: originalId)
+
+        let sessionKey = sessionStore.currentSessionKey.isEmpty
+            ? status.mainSessionKey
+            : sessionStore.currentSessionKey
+        log("OUT chat.send (resend) session=\(sessionKey)")
+
+        let newId = UUID().uuidString
+        let frame: [String: Any] = [
+            "type": "req",
+            "id": newId,
+            "method": "chat.send",
+            "params": [
+                "sessionKey": sessionKey,
+                "message": text,
+                "idempotencyKey": UUID().uuidString,
+            ] as [String: Any],
+        ]
+        sendJSON(frame) { [weak self] success in
+            Task { @MainActor in
+                if !success {
+                    self?.messageErrors[originalId] = "Failed to send"
                 }
             }
         }
@@ -1164,6 +1207,29 @@ class GatewayService: ObservableObject {
     }
 
     // MARK: - Internal send (for outbox drain)
+
+    /// Send a slash command without creating a visible user message.
+    func sendCommand(_ command: String) {
+        let sessionKey = sessionStore.currentSessionKey.isEmpty
+            ? status.mainSessionKey
+            : sessionStore.currentSessionKey
+        log("OUT command → \(command) session=\(sessionKey)")
+        let frame: [String: Any] = [
+            "type": "req",
+            "id": UUID().uuidString,
+            "method": "chat.send",
+            "params": [
+                "sessionKey": sessionKey,
+                "message": command,
+                "idempotencyKey": UUID().uuidString,
+            ],
+        ]
+        sendJSON(frame) { [weak self] success in
+            Task { @MainActor in
+                self?.log("Command \(command): \(success ? "delivered" : "FAILED")")
+            }
+        }
+    }
 
     func sendChatMessage(sessionKey: String, content: String, idempotencyKey: String) async -> Bool {
         await withCheckedContinuation { continuation in
